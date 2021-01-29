@@ -54,12 +54,15 @@ const (
 	PPubREL  MQTTControlPacket = 98  // 6
 	PPubCOMP MQTTControlPacket = 112 //7
 
-	PSubscribe       MQTTControlPacket = 8
-	PSubACK          MQTTControlPacket = 144 //9
-	P_Unsubscribe    MQTTControlPacket = 162 // 10
-	P_UnsubscribeACK MQTTControlPacket = 176 // 11
+	PSubscribe      MQTTControlPacket = 8
+	PSubACK         MQTTControlPacket = 144 //9
+	PUnsubscribe    MQTTControlPacket = 162 // 10
+	PUnsubscribeACK MQTTControlPacket = 176 // 11
 
-	P_KeepAlive MQTTControlPacket = 192 // 12
+	PPingREQ    MQTTControlPacket = 12  // 12
+	PPingRESP   MQTTControlPacket = 208 // 13
+	PDisconnect MQTTControlPacket = 14  // 14
+
 )
 
 type connectFlags struct {
@@ -83,7 +86,7 @@ type Protocol interface {
 }
 type Will struct {
 	Topic   string
-	Message string
+	Payload []byte
 	Qos     QOS
 	Retain  bool
 }
@@ -145,7 +148,7 @@ func (conn *Connect) Decode(properties []byte, remain []byte) error {
 
 		w := Will{
 			Topic:   string(topic),
-			Message: string(msg),
+			Payload: msg,
 			Qos:     connectFlag.willQos,
 			Retain:  connectFlag.willRetainFlag,
 		}
@@ -316,10 +319,45 @@ type UnSubscribe struct {
 	MSBPacketID byte
 	LSBPacketID byte
 	Topic       []string
-	Qos         []QOS
+}
+
+// properties: nil
+// remain: remain: packet without fixed header
+// InvalidErr without payload
+func (us *UnSubscribe) Decode(properties []uint8, remain []byte) error {
+	if len(remain) == 2 {
+		return InvalidErr
+	}
+
+	buffer := bytes.NewBuffer(remain)
+	MSBPacketID, _ := buffer.ReadByte()
+	LSBPacketID, _ := buffer.ReadByte()
+	us.MSBPacketID = MSBPacketID
+	us.LSBPacketID = LSBPacketID
+	us.Topic = []string{}
+
+	for {
+		if _, err := buffer.ReadByte(); err != nil {
+			break
+		}
+		lsb, _ := buffer.ReadByte()
+		topic := make([]byte, lsb)
+		_, _ = buffer.Read(topic)
+		us.Topic = append(us.Topic, string(topic))
+
+	}
+
+	return nil
 }
 
 type KeepAlive struct {
+}
+
+func NewPingRESP() []byte {
+	return []byte{
+		byte(PPingRESP),
+		0,
+	}
 }
 
 func parseConnectFlag(bits []uint8) connectFlags {

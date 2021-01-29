@@ -1,20 +1,28 @@
 package session
 
 import (
+	"errors"
 	"excel_parser/calc"
 	"excel_parser/proto"
 	"log"
 	"net"
+	"time"
 )
 
 type Session struct {
-	Conn     net.Conn
-	ClientID string
+	Conn        net.Conn
+	ClientID    string
+	Will        proto.Will
+	KeepAlive   int // unit second
+	LastPingReq time.Time
+
+	Subscribed map[string]chan string
 }
 
 func New(conn net.Conn) *Session {
 	s := new(Session)
 	s.Conn = conn
+	s.Subscribed = map[string]chan string{}
 	return s
 }
 
@@ -38,13 +46,19 @@ func (s *Session) Handle() {
 	// connect ack
 	_, _ = s.Write(proto.NewConnACK(proto.ConnAccept))
 
+	go s.checkLastPingReq()
+
 	for {
 		n, err := s.Read(bytes)
 		if err != nil {
 			_ = s.Close()
 			return
 		}
-		go s.processInteractive(bytes[:n])
+		if err := s.processInteractive(bytes[:n]); err != nil {
+			_ = s.Close()
+			return
+		}
+
 		log.Println(bytes[:n])
 	}
 }
@@ -84,6 +98,43 @@ func (s *Session) processInteractive(received []byte) error {
 	if ctrlPacket == proto.PSubscribe {
 		return s.handleSubscribe(remain)
 	}
+
+	if ctrlPacket == proto.PUnsubscribe {
+		return s.handleUnsubscribe(remain)
+	}
+
+	if ctrlPacket == proto.PPingREQ {
+		return s.handlePingREQ()
+	}
+
+	if ctrlPacket == proto.PDisconnect {
+		return s.handleDisconnect()
+	}
+
+	return nil
+}
+
+func (s *Session) handleDisconnect() error {
+	_ = s.Close()
+	return errors.New("disconnect")
+}
+
+func (s *Session) handlePingREQ() error {
+	s.LastPingReq = time.Now()
+	_, _ = s.Write(proto.NewPingRESP())
+	return nil
+}
+
+func (s *Session) handleUnsubscribe(remain []byte) error {
+	us := proto.UnSubscribe{}
+	if err := us.Decode(nil, remain); err != nil {
+		return err
+	}
+
+	// todo unsubscribe
+
+	ack := proto.NewCommonACK(proto.PUnsubscribeACK, us.MSBPacketID, us.LSBPacketID)
+	_, _ = s.Write(ack)
 
 	return nil
 }
@@ -139,6 +190,8 @@ func (s *Session) processConn(received []byte) error {
 		return err
 	}
 
+	s.Will = connect.Will
+	s.KeepAlive = connect.KeepAlive
 	return nil
 }
 
@@ -152,4 +205,32 @@ func (s *Session) Read(b []byte) (int, error) {
 
 func (s *Session) Close() error {
 	return s.Conn.Close()
+}
+
+func (s *Session) checkLastPingReq() {
+	var (
+		now     time.Time
+		elapsed time.Time
+		ticker  *time.Ticker
+	)
+
+	now = time.Now()
+	s.LastPingReq = now
+	// elapsed = now - keepalive
+	// if last before elapsed
+	ticker = time.NewTicker(time.Duration(s.KeepAlive) * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		elapsed = now.Add(-(time.Duration(s.KeepAlive) * time.Second))
+
+		// timeout
+		if s.LastPingReq.Before(elapsed) {
+			_ = s.Close()
+			return
+		}
+
+		now = time.Now()
+	}
+
 }
