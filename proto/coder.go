@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"excel_parser/calc"
-	"log"
 	"strings"
 )
 
@@ -202,6 +201,26 @@ type Publish struct {
 	Payload     []byte
 }
 
+func NewPublish(dup byte, qos QOS, retain byte, topicName string, payload []byte) []byte {
+	fixedHeader := 48 + dup*8 + byte(qos)*2 + retain
+
+	buffer := bytes.NewBuffer(nil)
+	buffer.WriteByte(fixedHeader)
+
+	body := bytes.NewBuffer(nil)
+	body.WriteByte(0)
+	body.WriteByte(byte(len(topicName)))
+	body.WriteString(topicName)
+	body.WriteByte(0)
+	body.WriteByte(1)
+	body.Write(payload)
+
+	buffer.WriteByte(byte(body.Len()))
+	buffer.Write(body.Bytes())
+
+	return buffer.Bytes()
+}
+
 // properties: DUP flag, QoS level, RETAIN
 // remain: remain: packet without fixed header
 func (pub *Publish) Decode(properties []uint8, remain []byte) error {
@@ -226,7 +245,6 @@ func (pub *Publish) Decode(properties []uint8, remain []byte) error {
 	if flag.qos != 0 {
 		msbPacketId, _ := buffer.ReadByte()
 		lsbPacketId, _ := buffer.ReadByte()
-		log.Println("packet id: ", lsbPacketId)
 		pub.MSBPacketID = msbPacketId
 		pub.LSBPacketID = lsbPacketId
 	}

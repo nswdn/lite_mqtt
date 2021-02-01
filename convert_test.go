@@ -42,3 +42,38 @@ func TestWriteToClosedChan(t *testing.T) {
 	i, ok := <-ints
 	fmt.Println(i, ok)
 }
+
+//multiplier = 1
+//value = 0
+//do
+//encodedByte = 'next byte from stream'
+//value += (encodedByte AND 127) * multiplier
+//multiplier *= 128
+//if (multiplier > 128*128*128)
+//throw Error(Malformed Remaining Length)
+//while ((encodedByte AND 128) != 0)
+func TestCalcRemainLen(t *testing.T) {
+	var value = 0
+	var multiplier = 1
+
+	l := []int{
+		128, 127,
+	}
+
+	for _, i := range l {
+
+		value += (i & 127) * multiplier
+
+		if (i & 128) == 0 {
+			break
+		}
+
+		multiplier *= 128
+		if multiplier > 128*128*128*128 {
+			return
+		}
+	}
+
+	fmt.Println(value)
+
+}

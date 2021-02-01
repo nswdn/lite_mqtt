@@ -6,20 +6,18 @@ import (
 	"net"
 )
 
-var sessions []*session.Session
-
 func main() {
 	pair, e := tls.LoadX509KeyPair("C:\\Users\\Administrator\\Desktop\\ca\\ca.crt", "C:\\Users\\Administrator\\Desktop\\ca\\ca.key")
 	if e != nil {
 		panic(e)
 	}
 	var (
-		tlsMode = true
+		tlsMode = false
 		listen  net.Listener
 		err     error
 	)
 
-	var addr = "172.168.5.102:45323"
+	var addr = "127.0.0.1:45323"
 	if tlsMode {
 		listen, err = tls.Listen("tcp", addr, &tls.Config{Certificates: []tls.Certificate{pair}})
 	} else {
@@ -36,7 +34,6 @@ func main() {
 			return
 		}
 		s := session.New(conn)
-		sessions = append(sessions, s)
 		go s.Handle()
 	}
 
