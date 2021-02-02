@@ -25,6 +25,7 @@ var (
 )
 
 const ProtocolName = "MQTT"
+const MaximumRemainLen = 128*128*128*128 - 1 // 268,435,454
 
 const (
 	ConnAccept             ConnRespCode = 0
@@ -55,7 +56,7 @@ const (
 
 	PSubscribe      MQTTControlPacket = 8
 	PSubACK         MQTTControlPacket = 144 //9
-	PUnsubscribe    MQTTControlPacket = 162 // 10
+	PUnsubscribe    MQTTControlPacket = 10  // 162
 	PUnsubscribeACK MQTTControlPacket = 176 // 11
 
 	PPingREQ    MQTTControlPacket = 12  // 12
@@ -105,9 +106,8 @@ type Connect struct {
 // remain: packet without fixed header
 // UnSupportedLevelErr if protocol is not mqtt:v3.1.1
 func (conn *Connect) Decode(properties []byte, remain []byte) error {
-	protocol := make([]byte, 4)
 	buffer := bytes.NewBuffer(remain)
-	_, _ = buffer.Read(protocol)
+	protocol := buffer.Next(4)
 	if !strings.EqualFold(string(protocol), ProtocolName) {
 		return UnSupportedLevelErr
 	}
@@ -130,20 +130,17 @@ func (conn *Connect) Decode(properties []byte, remain []byte) error {
 	_, _ = buffer.ReadByte()
 	lsbClientLen, _ := buffer.ReadByte()
 
-	client := make([]byte, lsbClientLen)
-	_, _ = buffer.Read(client)
+	client := buffer.Next(int(lsbClientLen))
 	conn.ClientID = string(client)
 
 	if connectFlag.willFlag {
 		_, _ = buffer.ReadByte()
 		lsbTopicLen, _ := buffer.ReadByte()
-		topic := make([]byte, lsbTopicLen)
-		_, _ = buffer.Read(topic)
+		topic := buffer.Next(int(lsbTopicLen))
 
 		_, _ = buffer.ReadByte()
 		lsbMsgLen, _ := buffer.ReadByte()
-		msg := make([]byte, lsbMsgLen)
-		_, _ = buffer.Read(msg)
+		msg := buffer.Next(int(lsbMsgLen))
 
 		w := Will{
 			Topic:   string(topic),
@@ -159,16 +156,14 @@ func (conn *Connect) Decode(properties []byte, remain []byte) error {
 	if connectFlag.userNameFlag {
 		_, _ = buffer.ReadByte()
 		lsbUserLen, _ := buffer.ReadByte()
-		userName := make([]byte, lsbUserLen)
-		_, _ = buffer.Read(userName)
+		userName := buffer.Next(int(lsbUserLen))
 		conn.User = string(userName)
 	}
 
 	if connectFlag.PwdFlag {
 		_, _ = buffer.ReadByte()
 		lsbPwdLen, _ := buffer.ReadByte()
-		pwd := make([]byte, lsbPwdLen)
-		_, _ = buffer.Read(pwd)
+		pwd := buffer.Next(int(lsbPwdLen))
 		conn.Pwd = string(pwd)
 	}
 
@@ -201,7 +196,7 @@ type Publish struct {
 	Payload     []byte
 }
 
-func NewPublish(dup byte, qos QOS, retain byte, topicName string, payload []byte) []byte {
+func NewPublish(dup byte, qos QOS, retain byte, topicName string, payload []byte) ([]byte, error) {
 	fixedHeader := 48 + dup*8 + byte(qos)*2 + retain
 
 	buffer := bytes.NewBuffer(nil)
@@ -215,10 +210,15 @@ func NewPublish(dup byte, qos QOS, retain byte, topicName string, payload []byte
 	body.WriteByte(1)
 	body.Write(payload)
 
-	buffer.WriteByte(byte(body.Len()))
+	remainingBytes, err := calcRemainingBytes(body.Len())
+	if err != nil {
+		return nil, err
+	}
+
+	buffer.Write(remainingBytes)
 	buffer.Write(body.Bytes())
 
-	return buffer.Bytes()
+	return buffer.Bytes(), nil
 }
 
 // properties: DUP flag, QoS level, RETAIN
@@ -420,4 +420,29 @@ func CalcControlPacket(binaryArr []uint8) MQTTControlPacket {
 	}
 
 	return res
+}
+
+func calcRemainingBytes(input int) ([]byte, error) {
+	var (
+		first = 0
+		next  = input
+		ret   [4]byte
+		k     = 0
+	)
+
+	if input > MaximumRemainLen {
+		return nil, errors.New("Malformed Remaining Length")
+	}
+
+	for next > 0 {
+		first = next % 128
+		next = next / 128
+		ret[k] = byte(first)
+		if next > 0 {
+			ret[k] |= 0x80
+		}
+		k++
+	}
+
+	return ret[:k], nil
 }

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
+	"excel_parser/proto"
 	"fmt"
 	"io/ioutil"
 	"testing"
@@ -57,11 +59,11 @@ func TestCalcRemainLen(t *testing.T) {
 	var multiplier = 1
 
 	l := []int{
-		128, 127,
+		254, 255, 255, 127,
 	}
 
+	var lo int
 	for _, i := range l {
-
 		value += (i & 127) * multiplier
 
 		if (i & 128) == 0 {
@@ -69,11 +71,54 @@ func TestCalcRemainLen(t *testing.T) {
 		}
 
 		multiplier *= 128
-		if multiplier > 128*128*128*128 {
-			return
+		if multiplier > 128*128*128 {
+			panic("Malformed Remaining Length")
 		}
 	}
 
-	fmt.Println(value)
+	fmt.Println(value, lo)
+}
 
+func TestCalcRemainByte(t *testing.T) {
+	var input = 268435455
+
+	var (
+		first = 0
+		next  = input
+		ret   [4]byte
+		k     = 0
+	)
+
+	if input > proto.MaximumRemainLen {
+		panic("Malformed Remaining Length")
+	}
+
+	for next > 0 {
+		first = next % 128
+		next = next / 128
+		ret[k] = byte(first)
+		if next > 0 {
+			ret[k] |= 0x80
+		}
+		k++
+	}
+
+	fmt.Println(ret[:k])
+}
+
+func TestAnd(t *testing.T) {
+	fmt.Println(128 & 128)
+}
+
+func TestBuffer(t *testing.T) {
+
+	buffer := bytes.NewBuffer(nil)
+	buffer.WriteByte(1)
+	fmt.Println(buffer.Next(1))
+	fmt.Println(buffer.Next(1))
+
+	buffer.Truncate(0)
+
+	newBuffer := bytes.NewBuffer(nil)
+	fmt.Println(newBuffer)
 }

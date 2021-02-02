@@ -10,20 +10,25 @@ import (
 )
 
 type Session struct {
+	decoder     *decoder
 	Conn        net.Conn
 	ClientID    string
 	Will        proto.Will
 	KeepAlive   int // unit second
 	LastPingReq time.Time
 
-	PublishSubsChan chan []byte // listen this channel when subscribing topic got a message
+	PublishSubsChan chan []byte // this channel brings all subscribing topic's message
 	PublishEndChan  chan byte   // write to this channel to stop select PublishSubsChan when disconnected or error
 
 	Subscribing map[string]SubscribingTopic // subscribing topics. key: topic name, value topic's info
 }
 
+func init() {
+	log.SetFlags(log.Lshortfile | log.Ltime)
+}
 func New(conn net.Conn) *Session {
 	s := new(Session)
+	s.decoder = NewDecoder()
 	s.Conn = conn
 	s.Subscribing = make(map[string]SubscribingTopic)
 
@@ -33,7 +38,7 @@ func New(conn net.Conn) *Session {
 }
 
 func (s *Session) Handle() {
-	bytes := make([]byte, 5000)
+	bytes := make([]byte, 1024)
 
 	n, err := s.Read(bytes)
 	if err != nil {
@@ -57,59 +62,31 @@ func (s *Session) Handle() {
 
 	go s.publish()
 
-	// todo unpack first, remaining length can be 4 bytes.
+	// todo unpack first, headerLen length can be 4 bytes.
 	// fixed header maximum length 5 bytes.
-	// last byte of remaining length x: 128 > x > 0, previous bytes y: 256 > y > 0.
-	// only publish packet's remaining bytes length can be orver than 1 byte
+	// last byte of headerLen length x: 128 > x > 0, previous bytes y: 256 > y > 0.
+	// only publish packet's headerLen bytes length can be orver than 1 byte
 	for {
 		n, err := s.Read(bytes)
+		log.Println(bytes[:n])
 		if err != nil {
 			_ = s.Close()
 			return
 		}
-		s.dispatch(bytes[:n])
+		_ = s.decoder.decode(bytes[:n])
+		if s.decoder.end {
+			if err := s.processInteractive(s.decoder.readAll(), s.decoder.headerLen); err != nil {
+				_ = s.Close()
+			}
+			s.decoder = NewDecoder()
+		}
 	}
 }
 
-func (s *Session) dispatch(iread []byte) {
-	var (
-		leftLen   byte
-		packetLen byte
-		packet    []byte
-	)
-
-	log.Println(len(iread))
-	log.Println(iread)
-
-	for {
-		if len(iread) == 0 {
-			break
-		}
-		if iread[0] == 192 {
-			_ = s.Close()
-		}
-
-		leftLen = iread[1]
-		packetLen = leftLen + 2
-		packet = iread[:packetLen]
-
-		if err := s.processInteractive(packet); err != nil {
-			log.Println(packet)
-			_ = s.Close()
-		}
-		iread = iread[packetLen:]
-	}
-}
-
-func (s *Session) processInteractive(received []byte) error {
+func (s *Session) processInteractive(received []byte, headerLen int) error {
 	bits := calc.Bytes2Bits(received[0])
 	ctrlPacket := proto.CalcControlPacket(bits[:4])
-
-	shouldRemainingLength := received[1]
-	remainingLength := len(received) - 2
-	if shouldRemainingLength != byte(remainingLength) {
-		return proto.IncompletePacketErr
-	}
+	log.Println("control packet", ctrlPacket)
 
 	if ctrlPacket == proto.PPubACK || ctrlPacket == 4 {
 		return nil
@@ -119,7 +96,7 @@ func (s *Session) processInteractive(received []byte) error {
 
 	}
 
-	remain := received[2:]
+	remain := received[headerLen:]
 
 	if ctrlPacket == proto.PPubREC || ctrlPacket == 5 {
 		s.Write(proto.NewCommonACK(proto.PPubREL, remain[0], remain[1]))
@@ -203,7 +180,7 @@ func (s *Session) handleSubscribe(remain []byte) error {
 		receiverChan := make(chan []byte)
 		stopChan := make(chan byte)
 		sessionCloseChan := b.GetTopic(topic, s.ClientID, receiverChan)
-		subscribingTopic := NewSubscribeTopic(sessionCloseChan, receiverChan, stopChan, topic, s.PublishSubsChan)
+		subscribingTopic := NewSubscribeTopic(sessionCloseChan, receiverChan, stopChan, topic, max, s.PublishSubsChan)
 		s.Subscribing[topic] = subscribingTopic
 	}
 
@@ -259,7 +236,9 @@ func (s *Session) Write(b []byte) (int, error) {
 }
 
 func (s *Session) Read(b []byte) (int, error) {
-	_ = s.Conn.SetReadDeadline(time.Now().Add(time.Second * 2))
+	if s.KeepAlive != 0 {
+		_ = s.Conn.SetReadDeadline(time.Now().Add(time.Second * time.Duration(s.KeepAlive*2)))
+	}
 	return s.Conn.Read(b)
 }
 
@@ -274,39 +253,6 @@ func (s *Session) Close() error {
 	return s.Conn.Close()
 }
 
-func (s *Session) checkLastPingReq() {
-
-	if s.KeepAlive == 0 {
-		return
-	}
-
-	var (
-		now     time.Time
-		elapsed time.Time
-		ticker  *time.Ticker
-	)
-
-	now = time.Now()
-	s.LastPingReq = now
-	// elapsed = now - keepalive
-	// if last before elapsed
-	ticker = time.NewTicker(time.Duration(s.KeepAlive) * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		elapsed = now.Add(-(time.Duration(s.KeepAlive)*time.Second + time.Millisecond*500))
-
-		// timeout
-		if s.LastPingReq.Before(elapsed) {
-			log.Println("alive")
-			_ = s.Close()
-			return
-		}
-
-		now = time.Now()
-	}
-}
-
 func (s *Session) publish() {
 loop:
 	for {
@@ -314,6 +260,7 @@ loop:
 		case resp := <-s.PublishSubsChan:
 			_, _ = s.Write(resp)
 		case <-s.PublishEndChan:
+			log.Println("stop publish to: ", s.ClientID)
 			break loop
 		}
 	}
@@ -321,17 +268,15 @@ loop:
 
 type SubscribingTopic struct {
 	UnsubscribeChan chan string // write session id to the channel to broker to stop listening topic's message
-
-	Receiver chan []byte // receives topic's publish
-	StopChan chan byte   // a signal channel to stop select Receiver
+	StopChan        chan byte   // a signal channel to stop select Receiver
 }
 
-func NewSubscribeTopic(unsubChan chan string, receiver chan []byte, stopChan chan byte, topic string, publishMsg chan []byte) SubscribingTopic {
+// subscribe a new topic. receiver channel will get new message
+func NewSubscribeTopic(unsubChan chan string, receiver chan []byte, stopChan chan byte, topic string, qos proto.QOS, publishMsg chan []byte) SubscribingTopic {
 
 	// todo qos
 	s := SubscribingTopic{
 		UnsubscribeChan: unsubChan,
-		Receiver:        receiver,
 		StopChan:        stopChan,
 	}
 
@@ -339,9 +284,15 @@ func NewSubscribeTopic(unsubChan chan string, receiver chan []byte, stopChan cha
 	loop:
 		for {
 			select {
-			case published := <-receiver:
-				publishMsg <- proto.NewPublish(0, proto.MustOne, 0, topic, published)
+			case msg := <-receiver:
+				publish, err := proto.NewPublish(0, qos, 0, topic, msg)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				publishMsg <- publish
 			case <-stopChan:
+				log.Println("stop listen topic: ", topic)
 				break loop
 			}
 		}
