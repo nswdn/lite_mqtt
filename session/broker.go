@@ -43,7 +43,11 @@ func (broker *Broker) Publish(topicName string, payload []byte) {
 	broker.rwMutex.RLock()
 	defer broker.rwMutex.RUnlock()
 
-	for _, v := range broker.Topics[topicName].Subscribers {
+	topic, ok := broker.Topics[topicName]
+	if !ok {
+		return
+	}
+	for _, v := range topic.Subscribers {
 		v <- payload
 	}
 }

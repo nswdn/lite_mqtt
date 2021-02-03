@@ -17,7 +17,7 @@ func main() {
 		err     error
 	)
 
-	var addr = "127.0.0.1:45323"
+	var addr = "0.0.0.0:45323"
 	if tlsMode {
 		listen, err = tls.Listen("tcp", addr, &tls.Config{Certificates: []tls.Certificate{pair}})
 	} else {

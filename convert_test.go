@@ -59,13 +59,21 @@ func TestCalcRemainLen(t *testing.T) {
 	var multiplier = 1
 
 	l := []int{
-		254, 255, 255, 127,
+		128, 255, 1, 1,
 	}
 
 	var lo int
+	var last int
 	for _, i := range l {
-		value += (i & 127) * multiplier
-
+		v := (i & 127) * multiplier
+		if last == 128 {
+			lo++
+		}
+		if v > 0 {
+			lo++
+		}
+		last = i
+		value += v
 		if (i & 128) == 0 {
 			break
 		}
@@ -121,4 +129,20 @@ func TestBuffer(t *testing.T) {
 
 	newBuffer := bytes.NewBuffer(nil)
 	fmt.Println(newBuffer)
+}
+
+func TestUint16(t *testing.T) {
+	i := []byte{
+		0, 1,
+	}
+
+	u := binary.BigEndian.Uint16(i)
+	fmt.Println(u)
+
+	i2 := make([]byte, 2)
+	binary.BigEndian.PutUint16(i2, u)
+	fmt.Println(i2)
+}
+
+func TestCalc(t *testing.T) {
 }

@@ -1,21 +1,24 @@
 package session
 
 import (
+	"encoding/binary"
 	"errors"
 	"excel_parser/calc"
 	"excel_parser/proto"
+	"fmt"
 	"log"
 	"net"
 	"time"
 )
 
 type Session struct {
-	decoder     *decoder
-	Conn        net.Conn
-	ClientID    string
-	Will        proto.Will
-	KeepAlive   int // unit second
-	LastPingReq time.Time
+	decoder         *decoder
+	Conn            net.Conn
+	ClientID        string
+	Will            proto.Will
+	KeepAlive       int // unit second
+	LastPingReq     time.Time
+	ProcessStopChan chan byte
 
 	PublishSubsChan chan []byte // this channel brings all subscribing topic's message
 	PublishEndChan  chan byte   // write to this channel to stop select PublishSubsChan when disconnected or error
@@ -27,14 +30,16 @@ func init() {
 	log.SetFlags(log.Lshortfile | log.Ltime)
 }
 func New(conn net.Conn) *Session {
-	s := new(Session)
-	s.decoder = NewDecoder()
-	s.Conn = conn
-	s.Subscribing = make(map[string]SubscribingTopic)
-
-	s.PublishSubsChan = make(chan []byte, 100)
-	s.PublishEndChan = make(chan byte, 1)
-	return s
+	session := &Session{
+		decoder:         NewDecoder(),
+		Conn:            conn,
+		ProcessStopChan: make(chan byte, 1),
+		Subscribing:     make(map[string]SubscribingTopic),
+		PublishSubsChan: make(chan []byte, 100),
+		PublishEndChan:  make(chan byte, 1),
+	}
+	go session.processInteractive()
+	return session
 }
 
 func (s *Session) Handle() {
@@ -47,88 +52,58 @@ func (s *Session) Handle() {
 	}
 
 	// connect
-	if err = s.processConn(bytes[:n]); err != nil {
-		if err == proto.UnSupportedLevelErr {
-			_, _ = s.Write(proto.NewConnACK(proto.ConnUnsupportedVersion))
-		}
-		_ = s.Close()
-		return
-	}
+	s.processConn(bytes[:n])
 
 	// connect ack
-	_, _ = s.Write(proto.NewConnACK(proto.ConnAccept))
 
 	log.Println(s.ClientID, "connected")
 
 	go s.publish()
 
-	// todo unpack first, headerLen length can be 4 bytes.
 	// fixed header maximum length 5 bytes.
 	// last byte of headerLen length x: 128 > x > 0, previous bytes y: 256 > y > 0.
-	// only publish packet's headerLen bytes length can be orver than 1 byte
+	// only publish packet's headerLen bytes length can be over than 1 byte
 	for {
 		n, err := s.Read(bytes)
-		log.Println(bytes[:n])
 		if err != nil {
 			_ = s.Close()
 			return
 		}
-		_ = s.decoder.decode(bytes[:n])
-		if s.decoder.end {
-			if err := s.processInteractive(s.decoder.readAll(), s.decoder.headerLen); err != nil {
-				_ = s.Close()
-			}
-			s.decoder = NewDecoder()
-		}
+		s.decoder.decode(bytes[:n])
 	}
 }
 
-func (s *Session) processInteractive(received []byte, headerLen int) error {
-	bits := calc.Bytes2Bits(received[0])
-	ctrlPacket := proto.CalcControlPacket(bits[:4])
-	log.Println("control packet", ctrlPacket)
+func (s *Session) processInteractive() {
+	var content content
+	var err error
+loop:
+	for {
+		select {
+		case content = <-s.decoder.publishChan:
+			err = s.handlePublish(content.properties, content.body)
+		case content = <-s.decoder.publishAckChan:
+		case content = <-s.decoder.publishRECChan:
+			s.Write(proto.NewCommonACK(proto.PPubRELAlia, binary.BigEndian.Uint16(content.body)))
+		case content = <-s.decoder.publishRELChan:
+			s.Write(proto.NewCommonACK(proto.PPubCOMPAlia, binary.BigEndian.Uint16(content.body)))
+		case content = <-s.decoder.subscribeChan:
+			err = s.handleSubscribe(content.body)
+		case content = <-s.decoder.unsubscribeChan:
+			err = s.handleUnsubscribe(content.body)
+		case content = <-s.decoder.pingREQChan:
+			err = s.handlePingREQ()
+		case content = <-s.decoder.disconnectChan:
+			err = s.handleDisconnect()
+		case <-s.ProcessStopChan:
+			break loop
+		}
 
-	if ctrlPacket == proto.PPubACK || ctrlPacket == 4 {
-		return nil
+		if err != nil {
+			s.Close()
+			break loop
+		}
 	}
 
-	if ctrlPacket == proto.PPubCOMP || ctrlPacket == 7 {
-
-	}
-
-	remain := received[headerLen:]
-
-	if ctrlPacket == proto.PPubREC || ctrlPacket == 5 {
-		s.Write(proto.NewCommonACK(proto.PPubREL, remain[0], remain[1]))
-		return nil
-	}
-
-	if ctrlPacket == proto.PPubREL || ctrlPacket == 6 {
-		s.Write(proto.NewCommonACK(proto.PPubCOMP, remain[0], remain[1]))
-		return nil
-	}
-
-	if ctrlPacket == proto.PPublish {
-		return s.handlePublish(bits[4:], remain)
-	}
-
-	if ctrlPacket == proto.PSubscribe {
-		return s.handleSubscribe(remain)
-	}
-
-	if ctrlPacket == proto.PUnsubscribe {
-		return s.handleUnsubscribe(remain)
-	}
-
-	if ctrlPacket == proto.PPingREQ {
-		return s.handlePingREQ()
-	}
-
-	if ctrlPacket == proto.PDisconnect {
-		return s.handleDisconnect()
-	}
-
-	return nil
 }
 
 func (s *Session) handleDisconnect() error {
@@ -156,7 +131,7 @@ func (s *Session) handleUnsubscribe(remain []byte) error {
 		delete(s.Subscribing, topic)
 	}
 
-	ack := proto.NewCommonACK(proto.PUnsubscribeACK, us.MSBPacketID, us.LSBPacketID)
+	ack := proto.NewCommonACK(proto.PUnsubscribeACK, us.PacketID)
 	_, _ = s.Write(ack)
 
 	return nil
@@ -177,14 +152,14 @@ func (s *Session) handleSubscribe(remain []byte) error {
 	}
 
 	for _, topic := range subscribe.Topic {
-		receiverChan := make(chan []byte)
+		receiverChan := make(chan []byte, 100)
 		stopChan := make(chan byte)
 		sessionCloseChan := b.GetTopic(topic, s.ClientID, receiverChan)
 		subscribingTopic := NewSubscribeTopic(sessionCloseChan, receiverChan, stopChan, topic, max, s.PublishSubsChan)
 		s.Subscribing[topic] = subscribingTopic
 	}
 
-	ack := proto.NewSubscribeACK(subscribe.Qos, subscribe.MSBPacketID, subscribe.LSBPacketID)
+	ack := proto.NewSubscribeACK(subscribe.Qos, subscribe.PacketID)
 	_, _ = s.Write(ack)
 
 	return nil
@@ -200,39 +175,47 @@ func (s *Session) handlePublish(properties []uint8, remain []byte) error {
 	b.Publish(publish.Topic, publish.Payload)
 
 	if publish.Qos == proto.AtLeaseOne {
-		_, _ = s.Write(proto.NewCommonACK(proto.PPubACK, publish.MSBPacketID, publish.LSBPacketID))
+		_, _ = s.Write(proto.NewCommonACK(proto.PPubACKAlia, publish.PacketID))
 		return nil
 	}
 
 	if publish.Qos == proto.MustOne {
-		_, _ = s.Write(proto.NewCommonACK(proto.PPubREC, publish.MSBPacketID, publish.LSBPacketID))
+		_, _ = s.Write(proto.NewCommonACK(proto.PPubRECAlia, publish.PacketID))
 		return nil
 	}
 
 	return nil
 }
 
-func (s *Session) processConn(received []byte) error {
+func (s *Session) processConn(received []byte) {
 	bits := calc.Bytes2Bits(received[0])
 	ctrlPacket := proto.CalcControlPacket(bits[:4])
 
 	if ctrlPacket != proto.PConnect {
-		return proto.UnConnErr
+		_ = s.Close()
+		return
 	}
 
 	connect := proto.Connect{}
 	if err := connect.Decode(nil, received[4:]); err != nil {
-		return err
+		_ = s.Close()
+		return
 	}
 
 	s.Will = connect.Will
 	s.ClientID = connect.ClientID
 	s.KeepAlive = connect.KeepAlive
-	return nil
+
+	_, _ = s.Write(proto.NewConnACK(proto.ConnAccept))
+	return
 }
 
 func (s *Session) Write(b []byte) (int, error) {
-	return s.Conn.Write(b)
+	write, err := s.Conn.Write(b)
+	if err != nil {
+		fmt.Println(err)
+	}
+	return write, err
 }
 
 func (s *Session) Read(b []byte) (int, error) {
@@ -249,6 +232,8 @@ func (s *Session) Close() error {
 		topic.UnsubscribeChan <- s.ClientID
 		delete(s.Subscribing, key)
 	}
+	s.ProcessStopChan <- 1
+	s.decoder.Close()
 	log.Println(s.ClientID, "closed")
 	return s.Conn.Close()
 }

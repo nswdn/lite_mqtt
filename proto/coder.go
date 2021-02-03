@@ -2,8 +2,11 @@ package proto
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"excel_parser/calc"
+	"math"
+	"math/rand"
 	"strings"
 )
 
@@ -48,18 +51,22 @@ const (
 	PConnect MQTTControlPacket = 1
 	PConnACK MQTTControlPacket = 32 // 2
 
-	PPublish MQTTControlPacket = 3
-	PPubACK  MQTTControlPacket = 64  // 4
-	PPubREC  MQTTControlPacket = 80  // 5
-	PPubREL  MQTTControlPacket = 98  // 6
-	PPubCOMP MQTTControlPacket = 112 //7
+	PPublish     MQTTControlPacket = 3
+	PPubACK      MQTTControlPacket = 4 // 4
+	PPubACKAlia  MQTTControlPacket = 64
+	PPubREC      MQTTControlPacket = 5 // 5
+	PPubRECAlia  MQTTControlPacket = 80
+	PPubREL      MQTTControlPacket = 6 // 6
+	PPubRELAlia  MQTTControlPacket = 98
+	PPubCOMP     MQTTControlPacket = 7   //7
+	PPubCOMPAlia MQTTControlPacket = 112 //7
 
 	PSubscribe      MQTTControlPacket = 8
 	PSubACK         MQTTControlPacket = 144 //9
 	PUnsubscribe    MQTTControlPacket = 10  // 162
 	PUnsubscribeACK MQTTControlPacket = 176 // 11
 
-	PPingREQ    MQTTControlPacket = 12  // 12
+	PPingREQ    MQTTControlPacket = 12  // 192
 	PPingRESP   MQTTControlPacket = 208 // 13
 	PDisconnect MQTTControlPacket = 14  // 14
 
@@ -123,24 +130,24 @@ func (conn *Connect) Decode(properties []byte, remain []byte) error {
 	bits := calc.Bytes2Bits(flag)
 	connectFlag := parseConnectFlag(bits)
 
-	_, _ = buffer.ReadByte()
-	lsbKeepAlive, _ := buffer.ReadByte()
-	conn.KeepAlive = int(lsbKeepAlive)
+	keepAliveBytes := buffer.Next(2)
+	keepAlive := binary.BigEndian.Uint16(keepAliveBytes)
+	conn.KeepAlive = int(keepAlive)
 
-	_, _ = buffer.ReadByte()
-	lsbClientLen, _ := buffer.ReadByte()
-
-	client := buffer.Next(int(lsbClientLen))
+	clientLenByte := buffer.Next(2)
+	clientLen := binary.BigEndian.Uint16(clientLenByte)
+	client := buffer.Next(int(clientLen))
 	conn.ClientID = string(client)
 
+	// will
 	if connectFlag.willFlag {
-		_, _ = buffer.ReadByte()
-		lsbTopicLen, _ := buffer.ReadByte()
-		topic := buffer.Next(int(lsbTopicLen))
+		topicLenBytes := buffer.Next(2)
+		topicLen := binary.BigEndian.Uint16(topicLenBytes)
+		topic := buffer.Next(int(topicLen))
 
-		_, _ = buffer.ReadByte()
-		lsbMsgLen, _ := buffer.ReadByte()
-		msg := buffer.Next(int(lsbMsgLen))
+		payloadLenBytes := buffer.Next(2)
+		payloadLen := binary.BigEndian.Uint16(payloadLenBytes)
+		msg := buffer.Next(int(payloadLen))
 
 		w := Will{
 			Topic:   string(topic),
@@ -154,16 +161,16 @@ func (conn *Connect) Decode(properties []byte, remain []byte) error {
 	}
 
 	if connectFlag.userNameFlag {
-		_, _ = buffer.ReadByte()
-		lsbUserLen, _ := buffer.ReadByte()
-		userName := buffer.Next(int(lsbUserLen))
+		userNameLenBytes := buffer.Next(2)
+		userNameLen := binary.BigEndian.Uint16(userNameLenBytes)
+		userName := buffer.Next(int(userNameLen))
 		conn.User = string(userName)
 	}
 
 	if connectFlag.PwdFlag {
-		_, _ = buffer.ReadByte()
-		lsbPwdLen, _ := buffer.ReadByte()
-		pwd := buffer.Next(int(lsbPwdLen))
+		pwdLenBytes := buffer.Next(2)
+		pwdLen := binary.BigEndian.Uint16(pwdLenBytes)
+		pwd := buffer.Next(int(pwdLen))
 		conn.Pwd = string(pwd)
 	}
 
@@ -187,27 +194,27 @@ func NewConnACK(code ConnRespCode) []byte {
 }
 
 type Publish struct {
-	Topic       string
-	Dup         bool
-	Qos         QOS
-	Retain      bool
-	MSBPacketID byte
-	LSBPacketID byte
-	Payload     []byte
+	Topic    string
+	Dup      bool
+	Qos      QOS
+	Retain   bool
+	PacketID uint16
+	Payload  []byte
 }
 
 func NewPublish(dup byte, qos QOS, retain byte, topicName string, payload []byte) ([]byte, error) {
 	fixedHeader := 48 + dup*8 + byte(qos)*2 + retain
+	packetID := rand.Intn(math.MaxUint16)
+	packetBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(packetBytes, uint16(packetID))
 
 	buffer := bytes.NewBuffer(nil)
 	buffer.WriteByte(fixedHeader)
-
 	body := bytes.NewBuffer(nil)
 	body.WriteByte(0)
 	body.WriteByte(byte(len(topicName)))
 	body.WriteString(topicName)
-	body.WriteByte(0)
-	body.WriteByte(1)
+	body.Write(packetBytes)
 	body.Write(payload)
 
 	remainingBytes, err := calcRemainingBytes(body.Len())
@@ -235,18 +242,16 @@ func (pub *Publish) Decode(properties []uint8, remain []byte) error {
 
 	// topic
 	buffer := bytes.NewBuffer(remain)
-	_, _ = buffer.ReadByte()
-	lsbTopicLen, _ := buffer.ReadByte()
-	topic := make([]byte, lsbTopicLen)
-	_, _ = buffer.Read(topic)
+	topicLenBytes := buffer.Next(2)
+	topicLen := binary.BigEndian.Uint16(topicLenBytes)
+	topic := buffer.Next(int(topicLen))
 	pub.Topic = string(topic)
 
 	// unique identifier, exist in Qos level 1&2 only
 	if flag.qos != 0 {
-		msbPacketId, _ := buffer.ReadByte()
-		lsbPacketId, _ := buffer.ReadByte()
-		pub.MSBPacketID = msbPacketId
-		pub.LSBPacketID = lsbPacketId
+		packetIDBytes := buffer.Next(2)
+		packetID := binary.BigEndian.Uint16(packetIDBytes)
+		pub.PacketID = packetID
 	}
 
 	// todo publish
@@ -262,21 +267,23 @@ type CommonACK struct {
 	LSBPacketID byte
 }
 
-func NewCommonACK(ctrlPacket MQTTControlPacket, MSBPacketID byte, LSBPacketID byte) []byte {
+func NewCommonACK(ctrlPacket MQTTControlPacket, packetID uint16) []byte {
+
+	packet := make([]byte, 2)
+	binary.BigEndian.PutUint16(packet, packetID)
 	ack := []byte{
 		byte(ctrlPacket),
 		2,
-		MSBPacketID,
-		LSBPacketID,
+		packet[0],
+		packet[1],
 	}
 	return ack
 }
 
 type Subscribe struct {
-	Topic       []string
-	Qos         []QOS
-	MSBPacketID byte
-	LSBPacketID byte
+	Topic    []string
+	Qos      []QOS
+	PacketID uint16
 }
 
 // properties: nil
@@ -284,20 +291,18 @@ type Subscribe struct {
 // QosOutOfBoundErr
 func (sub *Subscribe) Decode(properties []byte, remain []byte) error {
 	buffer := bytes.NewBuffer(remain)
-	msbPacketId, _ := buffer.ReadByte()
-	lsbPacketId, _ := buffer.ReadByte()
-	sub.MSBPacketID = msbPacketId
-	sub.LSBPacketID = lsbPacketId
+	packetBytes := buffer.Next(2)
+	sub.PacketID = binary.BigEndian.Uint16(packetBytes)
 	sub.Topic = []string{}
 	sub.Qos = []QOS{}
 	// get topic and it's qos
 	for {
-		if _, err := buffer.ReadByte(); err != nil {
+		topicLenBytes := buffer.Next(2)
+		if len(topicLenBytes) == 0 {
 			break
 		}
-		lsbTopicLen, _ := buffer.ReadByte()
-		topic := make([]byte, lsbTopicLen)
-		_, _ = buffer.Read(topic)
+		topicLen := binary.BigEndian.Uint16(topicLenBytes)
+		topic := buffer.Next(int(topicLen))
 		sub.Topic = append(sub.Topic, string(topic))
 
 		qos, _ := buffer.ReadByte()
@@ -318,12 +323,14 @@ type SubscribeACK struct {
 	Payload     []byte
 }
 
-func NewSubscribeACK(maxQos []QOS, MSBPacketID byte, LSBPacketID byte) []byte {
+func NewSubscribeACK(maxQos []QOS, packetID uint16) []byte {
+	packet := make([]byte, 2)
+	binary.BigEndian.PutUint16(packet, packetID)
 	ack := []byte{
 		byte(PSubACK),
 		2 + byte(len(maxQos)),
-		MSBPacketID,
-		LSBPacketID,
+		packet[0],
+		packet[1],
 	}
 
 	for _, qos := range maxQos {
@@ -334,9 +341,8 @@ func NewSubscribeACK(maxQos []QOS, MSBPacketID byte, LSBPacketID byte) []byte {
 }
 
 type UnSubscribe struct {
-	MSBPacketID byte
-	LSBPacketID byte
-	Topic       []string
+	PacketID uint16
+	Topic    []string
 }
 
 // properties: nil
@@ -348,21 +354,18 @@ func (us *UnSubscribe) Decode(properties []uint8, remain []byte) error {
 	}
 
 	buffer := bytes.NewBuffer(remain)
-	MSBPacketID, _ := buffer.ReadByte()
-	LSBPacketID, _ := buffer.ReadByte()
-	us.MSBPacketID = MSBPacketID
-	us.LSBPacketID = LSBPacketID
+	packetBytes := buffer.Next(2)
+	us.PacketID = binary.BigEndian.Uint16(packetBytes)
 	us.Topic = []string{}
 
 	for {
-		if _, err := buffer.ReadByte(); err != nil {
+		topicLenBytes := buffer.Next(2)
+		if len(topicLenBytes) == 0 {
 			break
 		}
-		lsb, _ := buffer.ReadByte()
-		topic := make([]byte, lsb)
-		_, _ = buffer.Read(topic)
+		topicLen := binary.BigEndian.Uint16(topicLenBytes)
+		topic := buffer.Next(int(topicLen))
 		us.Topic = append(us.Topic, string(topic))
-
 	}
 
 	return nil
