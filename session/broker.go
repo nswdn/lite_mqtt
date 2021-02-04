@@ -49,9 +49,10 @@ func (broker *Broker) GetTopic(topicName, clientID string, receiver chan []byte)
 }
 
 func (broker *Broker) publish() {
+	var message publishMessage
 	for {
 		select {
-		case message := <-broker.publishChan:
+		case message = <-broker.publishChan:
 			broker.rwMutex.RLock()
 			topic, ok := broker.Topics[message.topic]
 			if !ok {
