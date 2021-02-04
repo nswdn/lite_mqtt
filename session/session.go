@@ -151,14 +151,15 @@ func (s *Session) handleSubscribe(remain []byte) error {
 		}
 	}
 
-	for _, topic := range subscribe.Topic {
-		receiverChan := make(chan []byte, 100)
-		stopChan := make(chan byte)
-		// todo can be async
-		sessionCloseChan := b.GetTopic(topic, s.ClientID, receiverChan)
-		subscribingTopic := NewSubscribeTopic(sessionCloseChan, receiverChan, stopChan, topic, max, s.PublishSubsChan)
-		s.Subscribing[topic] = subscribingTopic
-	}
+	go func() {
+		for _, topic := range subscribe.Topic {
+			receiverChan := make(chan []byte, 100)
+			stopChan := make(chan byte)
+			sessionCloseChan := b.GetTopic(topic, s.ClientID, receiverChan)
+			subscribingTopic := NewSubscribeTopic(sessionCloseChan, receiverChan, stopChan, topic, max, s.PublishSubsChan)
+			s.Subscribing[topic] = subscribingTopic
+		}
+	}()
 
 	ack := proto.NewSubscribeACK(subscribe.Qos, subscribe.PacketID)
 	_, _ = s.Write(ack)
