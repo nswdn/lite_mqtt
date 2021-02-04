@@ -154,6 +154,7 @@ func (s *Session) handleSubscribe(remain []byte) error {
 	for _, topic := range subscribe.Topic {
 		receiverChan := make(chan []byte, 100)
 		stopChan := make(chan byte)
+		// todo can be async
 		sessionCloseChan := b.GetTopic(topic, s.ClientID, receiverChan)
 		subscribingTopic := NewSubscribeTopic(sessionCloseChan, receiverChan, stopChan, topic, max, s.PublishSubsChan)
 		s.Subscribing[topic] = subscribingTopic
@@ -172,7 +173,7 @@ func (s *Session) handlePublish(properties []uint8, remain []byte) error {
 	}
 
 	// todo publish, if retain == 1 store message
-	b.Publish(publish.Topic, publish.Payload)
+	b.publishChan <- publishMessage{publish.Topic, publish.Payload}
 
 	if publish.Qos == proto.AtLeaseOne {
 		_, _ = s.Write(proto.NewCommonACK(proto.PPubACKAlia, publish.PacketID))

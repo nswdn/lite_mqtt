@@ -11,14 +11,23 @@ type Topic struct {
 	Subscribers map[string]chan []byte
 	mutex       sync.Mutex
 }
-
+type publishMessage struct {
+	topic   string
+	payload []byte
+}
 type Broker struct {
-	Topics  map[string]*Topic
-	rwMutex sync.RWMutex
+	Topics      map[string]*Topic
+	rwMutex     sync.RWMutex
+	publishChan chan publishMessage
 }
 
 var b = &Broker{
-	Topics: make(map[string]*Topic),
+	Topics:      make(map[string]*Topic),
+	publishChan: make(chan publishMessage, 100),
+}
+
+func init() {
+	go b.publish()
 }
 
 func (broker *Broker) GetTopic(topicName, clientID string, receiver chan []byte) chan string {
@@ -39,17 +48,23 @@ func (broker *Broker) GetTopic(topicName, clientID string, receiver chan []byte)
 	return topic.Bus
 }
 
-func (broker *Broker) Publish(topicName string, payload []byte) {
-	broker.rwMutex.RLock()
-	defer broker.rwMutex.RUnlock()
+func (broker *Broker) publish() {
+	for {
+		select {
+		case message := <-broker.publishChan:
+			broker.rwMutex.RLock()
+			topic, ok := broker.Topics[message.topic]
+			if !ok {
+				broker.rwMutex.RUnlock()
+				return
+			}
+			for _, v := range topic.Subscribers {
+				v <- message.payload
+			}
+			broker.rwMutex.RUnlock()
+		}
+	}
 
-	topic, ok := broker.Topics[topicName]
-	if !ok {
-		return
-	}
-	for _, v := range topic.Subscribers {
-		v <- payload
-	}
 }
 
 func newTopic(name string) *Topic {

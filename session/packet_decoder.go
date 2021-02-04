@@ -13,7 +13,7 @@ type decoder struct {
 	totalLen  int
 	headerLen int
 
-	newMsgChan    chan []byte
+	newMsgChan    chan newMessage
 	decodeEndChan chan byte
 	stopChan      chan byte
 
@@ -27,6 +27,11 @@ type decoder struct {
 	disconnectChan  chan content
 }
 
+type newMessage struct {
+	headerLen int
+	content   []byte
+}
+
 type content struct {
 	properties []uint8
 	body       []byte
@@ -36,7 +41,7 @@ func NewDecoder() *decoder {
 	d := &decoder{
 		store:         bytes.NewBuffer(nil),
 		decodeEndChan: make(chan byte, 1),
-		newMsgChan:    make(chan []byte, 1),
+		newMsgChan:    make(chan newMessage, 1),
 		stopChan:      make(chan byte, 1),
 
 		publishChan:     make(chan content, 1),
@@ -59,9 +64,9 @@ loop:
 		select {
 		case packet := <-coder.newMsgChan:
 
-			bits := calc.Bytes2Bits(packet[0])
+			bits := calc.Bytes2Bits(packet.content[0])
 			ctrlPacket := proto.CalcControlPacket(bits[:4])
-			body := packet[coder.headerLen:]
+			body := packet.content[packet.headerLen:]
 			coder.selectChannel(ctrlPacket, content{bits, body})
 			coder.decoding = false
 		case <-coder.stopChan:
@@ -113,7 +118,7 @@ func (coder *decoder) decode(in []byte) {
 				return
 			}
 			fullPacket := coder.store.Next(coder.totalLen)
-			coder.newMsgChan <- fullPacket
+			coder.newMsgChan <- newMessage{coder.headerLen, fullPacket}
 		}
 		break
 	}
