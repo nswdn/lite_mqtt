@@ -20,12 +20,12 @@ type publishMessage struct {
 type Broker struct {
 	Topics      map[string]*Topic
 	rwMutex     sync.RWMutex
-	publishChan chan publishMessage
+	publishChan chan *publishMessage
 }
 
 var b = &Broker{
 	Topics:      make(map[string]*Topic),
-	publishChan: make(chan publishMessage, 1),
+	publishChan: make(chan *publishMessage, 1),
 }
 
 func init() {
@@ -51,7 +51,7 @@ func (broker *Broker) GetTopic(topicName, clientID string, receiver chan []byte)
 }
 
 func (broker *Broker) publish() {
-	var message publishMessage
+	var message *publishMessage
 	for {
 		select {
 		case message = <-broker.publishChan:

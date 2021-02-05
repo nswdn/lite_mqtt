@@ -174,7 +174,7 @@ func (s *Session) handlePublish(properties []uint8, remain []byte) error {
 	}
 
 	// todo publish, if retain == 1 store message
-	b.publishChan <- publishMessage{publish.Topic, publish.Payload}
+	b.publishChan <- &publishMessage{publish.Topic, publish.Payload}
 
 	if publish.Qos == proto.AtLeaseOne {
 		_, _ = s.Write(proto.NewCommonACK(proto.PPubACKAlia, publish.PacketID))
