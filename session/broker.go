@@ -11,10 +11,12 @@ type Topic struct {
 	Subscribers map[string]chan []byte
 	mutex       sync.Mutex
 }
+
 type publishMessage struct {
 	topic   string
 	payload []byte
 }
+
 type Broker struct {
 	Topics      map[string]*Topic
 	rwMutex     sync.RWMutex
@@ -23,7 +25,7 @@ type Broker struct {
 
 var b = &Broker{
 	Topics:      make(map[string]*Topic),
-	publishChan: make(chan publishMessage, 100),
+	publishChan: make(chan publishMessage, 1),
 }
 
 func init() {

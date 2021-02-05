@@ -133,7 +133,7 @@ func TestBuffer(t *testing.T) {
 
 func TestUint16(t *testing.T) {
 	i := []byte{
-		0, 1,
+		2, 0,
 	}
 
 	u := binary.BigEndian.Uint16(i)
@@ -145,4 +145,11 @@ func TestUint16(t *testing.T) {
 }
 
 func TestCalc(t *testing.T) {
+	i := []byte{
+		2, 2, 2, 0,
+	}
+	buffer := bytes.NewBuffer(i)
+	next := buffer.Next(4)
+	fmt.Println(next)
+
 }

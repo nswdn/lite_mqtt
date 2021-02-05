@@ -69,6 +69,7 @@ loop:
 			body := packet.content[packet.headerLen:]
 			coder.selectChannel(ctrlPacket, content{bits, body})
 			coder.decoding = false
+			coder.decodeEndChan <- 1
 		case <-coder.stopChan:
 			break loop
 		}
@@ -119,6 +120,7 @@ func (coder *decoder) decode(in []byte) {
 			}
 			fullPacket := coder.store.Next(coder.totalLen)
 			coder.newMsgChan <- newMessage{coder.headerLen, fullPacket}
+			<-coder.decodeEndChan
 		}
 		break
 	}
