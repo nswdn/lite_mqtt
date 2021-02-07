@@ -13,6 +13,7 @@ import (
 
 type Session struct {
 	decoder         *decoder
+	disconnected    bool
 	Conn            net.Conn
 	ClientID        string
 	Will            proto.Will
@@ -23,7 +24,7 @@ type Session struct {
 	PublishSubsChan chan []byte // this channel brings all subscribing topic's message
 	PublishEndChan  chan byte   // write to this channel to stop select PublishSubsChan when disconnected or error
 
-	Subscribing map[string]SubscribingTopic // subscribing topics. key: topic name, value topic's info
+	Subscribing map[string]*SubscribingTopic // subscribing topics. key: topic name, value topic's info
 }
 
 func init() {
@@ -34,18 +35,21 @@ func New(conn net.Conn) *Session {
 		decoder:         NewDecoder(),
 		Conn:            conn,
 		ProcessStopChan: make(chan byte, 1),
-		Subscribing:     make(map[string]SubscribingTopic),
+		Subscribing:     make(map[string]*SubscribingTopic),
 		PublishSubsChan: make(chan []byte, 100),
 		PublishEndChan:  make(chan byte, 1),
 	}
-	go session.processInteractive()
 	return session
 }
 
 func (s *Session) Handle() {
-	bytes := make([]byte, 1024)
+	var (
+		n     int
+		err   error
+		bytes = make([]byte, 1024)
+	)
 
-	n, err := s.Read(bytes)
+	n, err = s.Read(bytes)
 	if err != nil {
 		_ = s.Close()
 		return
@@ -58,13 +62,15 @@ func (s *Session) Handle() {
 
 	log.Println(s.ClientID, "connected")
 
+	go s.processInteractive()
 	go s.publish()
 
 	// fixed header maximum length 5 bytes.
 	// last byte of headerLen length x: 128 > x > 0, previous bytes y: 256 > y > 0.
-	// only publish packet's headerLen bytes length can be over than 1 byte
+	// only listenPublish packet's headerLen bytes length can be over than 1 byte
+
 	for {
-		n, err := s.Read(bytes)
+		n, err = s.Read(bytes)
 		if err != nil {
 			_ = s.Close()
 			return
@@ -74,8 +80,10 @@ func (s *Session) Handle() {
 }
 
 func (s *Session) processInteractive() {
-	var content content
-	var err error
+	var (
+		content content
+		err     error
+	)
 loop:
 	for {
 		select {
@@ -99,7 +107,7 @@ loop:
 		}
 
 		if err != nil {
-			s.Close()
+			s.Conn.Close()
 			break loop
 		}
 	}
@@ -107,7 +115,7 @@ loop:
 }
 
 func (s *Session) handleDisconnect() error {
-	_ = s.Close()
+	s.disconnected = true
 	return errors.New("disconnect")
 }
 
@@ -151,20 +159,22 @@ func (s *Session) handleSubscribe(remain []byte) error {
 		}
 	}
 
-	go func() {
-		for _, topic := range subscribe.Topic {
-			receiverChan := make(chan []byte, 100)
-			stopChan := make(chan byte)
-			sessionCloseChan := b.GetTopic(topic, s.ClientID, receiverChan)
-			subscribingTopic := NewSubscribeTopic(sessionCloseChan, receiverChan, stopChan, topic, max, s.PublishSubsChan)
-			s.Subscribing[topic] = subscribingTopic
-		}
-	}()
+	go s.asyncSubscribe(max, &subscribe)
 
 	ack := proto.NewSubscribeACK(subscribe.Qos, subscribe.PacketID)
 	_, _ = s.Write(ack)
 
 	return nil
+}
+
+func (s *Session) asyncSubscribe(max proto.QOS, subscribe *proto.Subscribe) {
+	for _, topic := range subscribe.Topic {
+		receiverChan := make(chan []byte, 100)
+		stopChan := make(chan byte)
+		sessionCloseChan := b.GetTopic(topic, s.ClientID, receiverChan)
+		subscribingTopic := NewSubscribeTopic(sessionCloseChan, receiverChan, s.PublishSubsChan, stopChan, topic, max)
+		s.Subscribing[topic] = subscribingTopic
+	}
 }
 
 func (s *Session) handlePublish(properties []uint8, remain []byte) error {
@@ -173,7 +183,7 @@ func (s *Session) handlePublish(properties []uint8, remain []byte) error {
 		return err
 	}
 
-	// todo publish, if retain == 1 store message
+	// todo listenPublish, if retain == 1 store message
 	b.publishChan <- &publishMessage{publish.Topic, publish.Payload}
 
 	if publish.Qos == proto.AtLeaseOne {
@@ -228,6 +238,11 @@ func (s *Session) Read(b []byte) (int, error) {
 }
 
 func (s *Session) Close() error {
+	if s.disconnected {
+		log.Println(s.Will.Payload)
+		b.publishChan <- &publishMessage{s.Will.Topic, s.Will.Payload}
+	}
+
 	s.PublishEndChan <- 0
 	for key, topic := range s.Subscribing {
 		topic.StopChan <- 0
@@ -247,7 +262,7 @@ loop:
 		case resp := <-s.PublishSubsChan:
 			_, _ = s.Write(resp)
 		case <-s.PublishEndChan:
-			log.Println("stop publish to: ", s.ClientID)
+			log.Println("stop listenPublish to: ", s.ClientID)
 			break loop
 		}
 	}
@@ -259,31 +274,37 @@ type SubscribingTopic struct {
 }
 
 // subscribe a new topic. receiver channel will get new message
-func NewSubscribeTopic(unsubChan chan string, receiver chan []byte, stopChan chan byte, topic string, qos proto.QOS, publishMsg chan []byte) SubscribingTopic {
+func NewSubscribeTopic(unsubChan chan string, receiver, publishMsg chan []byte, stopChan chan byte, topic string, qos proto.QOS) *SubscribingTopic {
 
 	// todo qos
-	s := SubscribingTopic{
+	s := &SubscribingTopic{
 		UnsubscribeChan: unsubChan,
 		StopChan:        stopChan,
 	}
 
-	go func() {
-	loop:
-		for {
-			select {
-			case msg := <-receiver:
-				publish, err := proto.NewPublish(0, qos, 0, topic, msg)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				publishMsg <- publish
-			case <-stopChan:
-				log.Println("stop listen topic: ", topic)
-				break loop
-			}
-		}
-	}()
+	go listenSubscribe(receiver, publishMsg, stopChan, topic, qos)
 
 	return s
+}
+
+func listenSubscribe(receiveChan, publishChan chan []byte, stopChan chan byte, topic string, qos proto.QOS) {
+	var (
+		msg, publish []byte
+		err          error
+	)
+loop:
+	for {
+		select {
+		case msg = <-receiveChan:
+			publish, err = proto.NewPublish(0, qos, 0, topic, msg)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			publishChan <- publish
+		case <-stopChan:
+			log.Println("stop listen topic: ", topic)
+			break loop
+		}
+	}
 }

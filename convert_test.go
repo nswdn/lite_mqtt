@@ -8,15 +8,16 @@ import (
 	"excel_parser/proto"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"testing"
 )
 
 func TestConv(t *testing.T) {
-
-	bytes := make([]byte, 4)
-
-	binary.BigEndian.PutUint32(bytes, 3)
-	fmt.Println(bytes)
+	i := make([]byte, 1024)
+	rand.Read(i)
+	buffer := bytes.NewBuffer(i)
+	buffer.Reset()
+	fmt.Println(buffer)
 }
 
 func TestTlS(t *testing.T) {

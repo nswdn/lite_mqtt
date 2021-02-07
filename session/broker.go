@@ -7,8 +7,8 @@ import (
 
 type Topic struct {
 	Name        string
-	Bus         chan string
-	Subscribers map[string]chan []byte
+	Bus         chan string              // listen unsubscribe write clientID in
+	Subscribers map[string]chan<- []byte // key: clientID, value: channel to notify new subscribe message
 	mutex       sync.Mutex
 }
 
@@ -29,39 +29,42 @@ var b = &Broker{
 }
 
 func init() {
-	go b.publish()
+	go b.listenPublish()
 }
 
-func (broker *Broker) GetTopic(topicName, clientID string, receiver chan []byte) chan string {
+func (broker *Broker) GetTopic(topicName, clientID string, receiver chan<- []byte) chan string {
 	broker.rwMutex.Lock()
 	defer broker.rwMutex.Unlock()
 
-	topic := broker.Topics[topicName]
-	if topic == nil {
+	topic, ok := broker.Topics[topicName]
+	if !ok {
 		topic = newTopic(topicName)
-		topic.Subscribers = map[string]chan []byte{
-			clientID: receiver,
-		}
 	}
 
-	topic.addReceiver(clientID, receiver)
+	topic.Subscribers[clientID] = receiver
 	broker.Topics[topicName] = topic
 
 	return topic.Bus
 }
 
-func (broker *Broker) publish() {
-	var message *publishMessage
+func (broker *Broker) listenPublish() {
+	var (
+		message *publishMessage
+		topic   *Topic
+		ok      bool
+		v       chan<- []byte
+	)
+
 	for {
 		select {
 		case message = <-broker.publishChan:
 			broker.rwMutex.RLock()
-			topic, ok := broker.Topics[message.topic]
+			topic, ok = broker.Topics[message.topic]
 			if !ok {
 				broker.rwMutex.RUnlock()
 				return
 			}
-			for _, v := range topic.Subscribers {
+			for _, v = range topic.Subscribers {
 				v <- message.payload
 			}
 			broker.rwMutex.RUnlock()
@@ -70,26 +73,24 @@ func (broker *Broker) publish() {
 
 }
 
-func newTopic(name string) *Topic {
-	t := new(Topic)
-	t.Name = name
-	t.Bus = make(chan string, 100)
-	go t.listenUnsub()
-	return t
-}
-
-func (to *Topic) addReceiver(clientID string, receiver chan []byte) {
-	to.Subscribers[clientID] = receiver
-}
-
 func (to *Topic) listenUnsub() {
+	var clientID string
 	for {
 		select {
-		case clientID := <-to.Bus:
+		case clientID = <-to.Bus:
 			to.mutex.Lock()
 			delete(to.Subscribers, clientID)
 			to.mutex.Unlock()
 			log.Printf("%s unsubscribe topic: %s", clientID, to.Name)
 		}
 	}
+}
+
+func newTopic(name string) *Topic {
+	t := new(Topic)
+	t.Name = name
+	t.Subscribers = make(map[string]chan<- []byte)
+	t.Bus = make(chan string, 100)
+	go t.listenUnsub()
+	return t
 }

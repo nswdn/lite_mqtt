@@ -4,9 +4,15 @@ import (
 	"crypto/tls"
 	"excel_parser/session"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
 )
 
 func main() {
+	go func() {
+		http.ListenAndServe("0.0.0.0:8080", nil)
+	}()
+
 	pair, e := tls.LoadX509KeyPair("C:\\Users\\Administrator\\Desktop\\ca\\ca.crt", "C:\\Users\\Administrator\\Desktop\\ca\\ca.key")
 	if e != nil {
 		panic(e)
@@ -28,12 +34,13 @@ func main() {
 		panic(err)
 	}
 
+	var s *session.Session
 	for {
 		conn, err := listen.Accept()
 		if err != nil {
 			return
 		}
-		s := session.New(conn)
+		s = session.New(conn)
 		go s.Handle()
 	}
 
