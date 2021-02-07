@@ -6,13 +6,28 @@ import (
 )
 
 func TestTrie(t *testing.T) {
-	tr.insert("asd/w", "1", nil)
-	tr.insert("asd/d", "2", nil)
-	tr.insert("asd/s", "3", nil)
-	tr.insert("qwe/v", "4", nil)
-	tr.insert("asd/s/s", "5", nil)
-	tr.insert("asd/s/s", "5", nil)
-	match := tr.match("qwe/v")
-	match2 := tr.match("asd/s")
-	fmt.Println(tr.root, match, match2)
+	client1 := make(chan []byte, 1)
+	client2 := make(chan []byte, 1)
+
+	go func() {
+		b.GetTopic("asd/a", "client1", client1)
+		b.GetTopic("asd/b", "client2", client2)
+		b.publishChan <- &publishMessage{
+			topic:   "asd/a",
+			payload: []byte{123},
+		}
+		b.publishChan <- &publishMessage{
+			topic:   "asd/c",
+			payload: []byte{123},
+		}
+	}()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case r := <-client1:
+			fmt.Println(r)
+		case r := <-client2:
+			fmt.Println(r)
+		}
+	}
 }

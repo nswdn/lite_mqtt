@@ -55,9 +55,10 @@ func (broker *Broker) listenPublish() {
 		select {
 		case message = <-broker.publishChan:
 			broker.rwMutex.RLock()
-			match = broker.topicTrie.match(message.topic)
-			for _, receiveChan = range match.topic.Subscribers {
-				receiveChan <- message.payload
+			if match = broker.topicTrie.match(message.topic); match != nil {
+				for _, receiveChan = range match.topic.Subscribers {
+					receiveChan <- message.payload
+				}
 			}
 			broker.rwMutex.RUnlock()
 		}
