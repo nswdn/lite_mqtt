@@ -4,11 +4,15 @@ import "strings"
 
 var tr *trie
 
-const splitter = "/"
+const (
+	splitter = "/"
+	empty    = ""
+)
 
 type trieNode struct {
-	size int
-	next map[string]*trieNode
+	topic *Topic // key: clientID
+	size  int
+	next  map[string]*trieNode
 }
 
 type trie struct {
@@ -25,18 +29,28 @@ func init() {
 }
 
 // test/w
-func (tr *trie) insert(v string) {
+func (tr *trie) insert(v string, id string, receiver chan<- []byte) *trieNode {
 	split := strings.Split(v, splitter)
+
+	match := tr.match(v)
+	if match != nil {
+		match.topic.Subscribers[id] = receiver
+		return match
+	}
+
 	var node = tr.root
 
 	for _, str := range split {
 		_, ok := node.next[str]
 		if !ok {
-			node.next[str] = newNode()
+			node.next[str] = newNode(v)
 		}
 		node.size++
 		node = node.next[str]
 	}
+
+	node.topic = newTopic(v, id, receiver)
+	return node
 }
 
 // test/v
@@ -50,6 +64,7 @@ func (tr *trie) match(v string) *trieNode {
 		}
 		node = trNode
 	}
+
 	return node
 }
 
@@ -70,8 +85,9 @@ func (tr *trie) delete(v string) string {
 	return v
 }
 
-func newNode() *trieNode {
+func newNode(topicName string) *trieNode {
 	return &trieNode{
-		next: make(map[string]*trieNode),
+		next:  make(map[string]*trieNode),
+		topic: newTopic(topicName, "", nil),
 	}
 }
