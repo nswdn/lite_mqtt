@@ -5,6 +5,7 @@ import (
 	"errors"
 	"excel_parser/calc"
 	"excel_parser/proto"
+	"excel_parser/trie"
 	"fmt"
 	"log"
 	"net"
@@ -51,7 +52,7 @@ func (s *Session) Handle() {
 
 	n, err = s.Read(bytes)
 	if err != nil {
-		_ = s.Conn.Close()
+		_ = s.Close()
 		return
 	}
 
@@ -171,7 +172,7 @@ func (s *Session) asyncSubscribe(max proto.QOS, subscribe *proto.Subscribe) {
 	for _, topic := range subscribe.Topic {
 		receiverChan := make(chan []byte, 100)
 		stopChan := make(chan byte)
-		sessionCloseChan := b.GetTopic(topic, s.ClientID, receiverChan)
+		sessionCloseChan := trie.GetTopic(topic, s.ClientID, receiverChan)
 		subscribingTopic := NewSubscribeTopic(sessionCloseChan, receiverChan, s.PublishSubsChan, stopChan, topic, max)
 		s.Subscribing[topic] = subscribingTopic
 	}
@@ -184,7 +185,7 @@ func (s *Session) handlePublish(properties []uint8, remain []byte) error {
 	}
 
 	// todo listenPublish, if retain == 1 store message
-	b.publishChan <- &publishMessage{publish.Topic, publish.Payload}
+	trie.Publish(publish.Topic, publish.Payload)
 
 	if publish.Qos == proto.AtLeaseOne {
 		_, _ = s.Write(proto.NewCommonACK(proto.PPubACKAlia, publish.PacketID))
@@ -240,7 +241,7 @@ func (s *Session) Read(b []byte) (int, error) {
 func (s *Session) Close() error {
 	if s.disconnected {
 		log.Println(s.Will.Payload)
-		b.publishChan <- &publishMessage{s.Will.Topic, s.Will.Payload}
+		trie.Publish(s.Will.Topic, s.Will.Payload)
 	}
 
 	s.PublishEndChan <- 0
@@ -251,7 +252,6 @@ func (s *Session) Close() error {
 	}
 	s.ProcessStopChan <- 1
 	s.decoder.Close()
-	log.Println(s.ClientID, "closed")
 	return s.Conn.Close()
 }
 

@@ -10,8 +10,8 @@ func TestTrie(t *testing.T) {
 	client2 := make(chan []byte, 1)
 
 	go func() {
-		b.GetTopic("asd/a", "client1", client1)
-		b.GetTopic("asd/b", "client2", client2)
+		GetTopic("asd/a", "client1", client1)
+		GetTopic("asd/b", "client2", client2)
 		b.publishChan <- &publishMessage{
 			topic:   "asd/a",
 			payload: []byte{123},

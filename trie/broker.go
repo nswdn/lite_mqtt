@@ -36,12 +36,16 @@ func init() {
 	go b.listenPublish()
 }
 
-func (broker *Broker) GetTopic(topicName, clientID string, receiver chan<- []byte) chan string {
-	broker.rwMutex.Lock()
-	defer broker.rwMutex.Unlock()
+func GetTopic(topicName, clientID string, receiver chan<- []byte) chan string {
+	b.rwMutex.Lock()
+	defer b.rwMutex.Unlock()
 
-	result := broker.topicTrie.insert(topicName, clientID, receiver)
+	result := b.topicTrie.insert(topicName, clientID, receiver)
 	return result.topic.Bus
+}
+
+func Publish(topic string, payload []byte) {
+	b.publishChan <- &publishMessage{topic, payload}
 }
 
 func (broker *Broker) listenPublish() {
@@ -63,7 +67,6 @@ func (broker *Broker) listenPublish() {
 			broker.rwMutex.RUnlock()
 		}
 	}
-
 }
 
 func (to *Topic) listenUnsub() {
