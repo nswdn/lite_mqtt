@@ -17,7 +17,7 @@ type Session struct {
 	Conn            net.Conn
 	ClientID        string
 	Will            proto.Will
-	KeepAlive       int // unit second
+	KeepAlive       int // second
 	LastPingReq     time.Time
 	ProcessStopChan chan byte
 
@@ -51,7 +51,7 @@ func (s *Session) Handle() {
 
 	n, err = s.Read(bytes)
 	if err != nil {
-		_ = s.Close()
+		_ = s.Conn.Close()
 		return
 	}
 
