@@ -9,11 +9,13 @@ type Topic struct {
 	Bus         chan string              // listen unsubscribe write clientID in
 	Subscribers map[string]chan<- []byte // key: clientID, value: channel to notify new subscribe message
 	mutex       sync.Mutex
+	Retain      *publishMessage
 }
 
 type publishMessage struct {
 	topic   string
 	payload []byte
+	retain  bool
 }
 
 type Broker struct {
@@ -29,7 +31,7 @@ var b = &Broker{
 			next: make(map[string]*trieNode),
 		},
 	},
-	publishChan: make(chan *publishMessage, 1),
+	publishChan: make(chan *publishMessage, 50),
 }
 
 func init() {
@@ -41,18 +43,24 @@ func GetTopic(topicName, clientID string, receiver chan<- []byte) chan string {
 	defer b.rwMutex.Unlock()
 
 	result := b.topicTrie.insert(topicName, clientID, receiver)
+
+	retainMsg := result.topic.Retain
+	if retainMsg != nil {
+		receiver <- retainMsg.payload
+	}
+
 	return result.topic.Bus
 }
 
-func Publish(topic string, payload []byte) {
-	b.publishChan <- &publishMessage{topic, payload}
+func Publish(topic string, retain bool, payload []byte) {
+	b.publishChan <- &publishMessage{topic, payload, retain}
 }
 
 func (broker *Broker) listenPublish() {
 	var (
 		message     *publishMessage
 		match       *trieNode
-		receiveChan chan<- []byte
+		publishChan chan<- []byte
 	)
 
 	for {
@@ -60,9 +68,20 @@ func (broker *Broker) listenPublish() {
 		case message = <-broker.publishChan:
 			broker.rwMutex.RLock()
 			if match = broker.topicTrie.match(message.topic); match != nil {
-				for _, receiveChan = range match.topic.Subscribers {
-					receiveChan <- message.payload
+				if message.retain == true {
+					if len(message.payload) > 0 {
+						match.topic.Retain = message
+					} else {
+						match.topic.Retain = nil
+					}
 				}
+
+				match.topic.mutex.Lock()
+				for _, publishChan = range match.topic.Subscribers {
+					publishChan <- message.payload
+				}
+				match.topic.mutex.Unlock()
+
 			}
 			broker.rwMutex.RUnlock()
 		}
