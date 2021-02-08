@@ -1,7 +1,6 @@
 package trie
 
 import (
-	"log"
 	"sync"
 )
 
@@ -48,7 +47,6 @@ func GetTopic(topicName, clientID string, receiver chan<- []byte) chan string {
 
 	retainMsg := result.topic.retain
 	if result.topic.hasRetain {
-		log.Printf("%p\n", result.topic.retain.payload)
 		receiver <- retainMsg.payload
 	}
 

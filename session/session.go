@@ -181,7 +181,6 @@ func (s *Session) asyncSubscribe(max proto.QOS, subscribe *proto.Subscribe) {
 }
 
 func (s *Session) handlePublish(properties []uint8, remain []byte) error {
-	log.Printf("%p\n", remain)
 	publish := proto.Publish{}
 	if err := publish.Decode(properties, remain); err != nil {
 		return err
