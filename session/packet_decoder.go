@@ -5,7 +5,6 @@ import (
 	"errors"
 	"excel_parser/calc"
 	"excel_parser/proto"
-	"log"
 )
 
 type decoder struct {
@@ -67,9 +66,7 @@ loop:
 			bits := calc.Bytes2Bits(packet.content[0])
 			ctrlPacket := proto.CalcControlPacket(bits[:4])
 			body := packet.content[packet.headerLen:]
-			log.Printf("%p\n", body)
-			c := content{bits, body}
-			coder.selectChannel(ctrlPacket, c)
+			coder.selectChannel(ctrlPacket, content{bits[4:], body})
 			coder.decoding = false
 			coder.decodeEndChan <- 1
 		case <-coder.stopChan:
@@ -82,7 +79,6 @@ func (coder *decoder) selectChannel(packet proto.MQTTControlPacket, content cont
 	switch packet {
 	case proto.PPublish:
 		coder.publishChan <- content
-		log.Println(content)
 	case proto.PPubACK:
 		coder.publishAckChan <- content
 	case proto.PPubREC:
@@ -103,7 +99,6 @@ func (coder *decoder) selectChannel(packet proto.MQTTControlPacket, content cont
 
 func (coder *decoder) decode(in []byte) {
 	coder.store.Write(in)
-	log.Println(in)
 	for {
 		if coder.store.Len() >= 2 {
 			if !coder.decoding {
@@ -122,6 +117,7 @@ func (coder *decoder) decode(in []byte) {
 			if coder.store.Len() < coder.totalLen {
 				return
 			}
+
 			fullPacket := coder.store.Next(coder.totalLen)
 			coder.newMsgChan <- newMessage{coder.headerLen, fullPacket}
 			<-coder.decodeEndChan

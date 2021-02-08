@@ -1,6 +1,7 @@
 package trie
 
 import (
+	"log"
 	"sync"
 )
 
@@ -9,7 +10,8 @@ type Topic struct {
 	Bus         chan string              // listen unsubscribe write clientID in
 	Subscribers map[string]chan<- []byte // key: clientID, value: channel to notify new subscribe message
 	mutex       sync.Mutex
-	Retain      *publishMessage
+	hasRetain   bool
+	retain      publishMessage
 }
 
 type publishMessage struct {
@@ -21,7 +23,7 @@ type publishMessage struct {
 type Broker struct {
 	topicTrie   *trie
 	rwMutex     sync.RWMutex
-	publishChan chan *publishMessage
+	publishChan chan publishMessage
 }
 
 var b = &Broker{
@@ -31,7 +33,7 @@ var b = &Broker{
 			next: make(map[string]*trieNode),
 		},
 	},
-	publishChan: make(chan *publishMessage, 50),
+	publishChan: make(chan publishMessage, 50),
 }
 
 func init() {
@@ -44,8 +46,9 @@ func GetTopic(topicName, clientID string, receiver chan<- []byte) chan string {
 
 	result := b.topicTrie.insert(topicName, clientID, receiver)
 
-	retainMsg := result.topic.Retain
-	if retainMsg != nil {
+	retainMsg := result.topic.retain
+	if result.topic.hasRetain {
+		log.Printf("%p\n", result.topic.retain.payload)
 		receiver <- retainMsg.payload
 	}
 
@@ -53,12 +56,12 @@ func GetTopic(topicName, clientID string, receiver chan<- []byte) chan string {
 }
 
 func Publish(topic string, retain bool, payload []byte) {
-	b.publishChan <- &publishMessage{topic, payload, retain}
+	b.publishChan <- publishMessage{topic, payload, retain}
 }
 
 func (broker *Broker) listenPublish() {
 	var (
-		message     *publishMessage
+		message     publishMessage
 		match       *trieNode
 		publishChan chan<- []byte
 	)
@@ -70,9 +73,10 @@ func (broker *Broker) listenPublish() {
 			if match = broker.topicTrie.match(message.topic); match != nil {
 				if message.retain == true {
 					if len(message.payload) > 0 {
-						match.topic.Retain = message
+						match.topic.retain = message
+						match.topic.hasRetain = true
 					} else {
-						match.topic.Retain = nil
+						match.topic.hasRetain = false
 					}
 				}
 
