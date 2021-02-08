@@ -3,7 +3,6 @@ package session
 import (
 	"encoding/binary"
 	"errors"
-	"excel_parser/calc"
 	"excel_parser/proto"
 	"excel_parser/trie"
 	"fmt"
@@ -57,7 +56,10 @@ func (s *Session) Handle() {
 	}
 
 	// connect
-	s.processConn(bytes[:n])
+	if err = s.processConn(bytes[:n]); err != nil {
+		_ = s.Close()
+		return
+	}
 
 	// connect ack
 
@@ -82,7 +84,7 @@ func (s *Session) Handle() {
 
 func (s *Session) processInteractive() {
 	var (
-		content content
+		content *content
 		err     error
 	)
 loop:
@@ -185,7 +187,7 @@ func (s *Session) handlePublish(properties []uint8, remain []byte) error {
 	}
 
 	// todo listenPublish, if retain == 1 store message
-	trie.Publish(publish.Topic, publish.Payload)
+	trie.Publish(publish.Topic, publish.Retain, publish.Payload)
 
 	if publish.Qos == proto.AtLeaseOne {
 		_, _ = s.Write(proto.NewCommonACK(proto.PPubACKAlia, publish.PacketID))
@@ -200,19 +202,15 @@ func (s *Session) handlePublish(properties []uint8, remain []byte) error {
 	return nil
 }
 
-func (s *Session) processConn(received []byte) {
-	bits := calc.Bytes2Bits(received[0])
-	ctrlPacket := proto.CalcControlPacket(bits[:4])
+func (s *Session) processConn(received []byte) error {
 
-	if ctrlPacket != proto.PConnect {
-		_ = s.Close()
-		return
+	if proto.MQTTControlPacket(received[0]) != proto.PConnectAlia {
+		return errors.New(fmt.Sprintf("invalid control packet: [%b]", received[0]))
 	}
 
 	connect := proto.Connect{}
 	if err := connect.Decode(nil, received[4:]); err != nil {
-		_ = s.Close()
-		return
+		return err
 	}
 
 	s.Will = connect.Will
@@ -220,7 +218,7 @@ func (s *Session) processConn(received []byte) {
 	s.KeepAlive = connect.KeepAlive
 
 	_, _ = s.Write(proto.NewConnACK(proto.ConnAccept))
-	return
+	return nil
 }
 
 func (s *Session) Write(b []byte) (int, error) {
@@ -241,7 +239,7 @@ func (s *Session) Read(b []byte) (int, error) {
 func (s *Session) Close() error {
 	if s.disconnected {
 		log.Println(s.Will.Payload)
-		trie.Publish(s.Will.Topic, s.Will.Payload)
+		trie.Publish(s.Will.Topic, s.Will.Retain, s.Will.Payload)
 	}
 
 	s.PublishEndChan <- 0
@@ -303,7 +301,6 @@ loop:
 			}
 			publishChan <- publish
 		case <-stopChan:
-			log.Println("stop listen topic: ", topic)
 			break loop
 		}
 	}

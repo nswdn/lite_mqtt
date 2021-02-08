@@ -17,14 +17,14 @@ type decoder struct {
 	decodeEndChan chan byte
 	stopChan      chan byte
 
-	publishChan     chan content
-	publishAckChan  chan content
-	publishRECChan  chan content
-	publishRELChan  chan content
-	subscribeChan   chan content
-	unsubscribeChan chan content
-	pingREQChan     chan content
-	disconnectChan  chan content
+	publishChan     chan *content
+	publishAckChan  chan *content
+	publishRECChan  chan *content
+	publishRELChan  chan *content
+	subscribeChan   chan *content
+	unsubscribeChan chan *content
+	pingREQChan     chan *content
+	disconnectChan  chan *content
 }
 
 type newMessage struct {
@@ -44,14 +44,14 @@ func NewDecoder() *decoder {
 		newMsgChan:    make(chan newMessage, 1),
 		stopChan:      make(chan byte, 1),
 
-		publishChan:     make(chan content, 1),
-		publishAckChan:  make(chan content, 1),
-		publishRECChan:  make(chan content, 1),
-		publishRELChan:  make(chan content, 1),
-		subscribeChan:   make(chan content, 1),
-		unsubscribeChan: make(chan content, 1),
-		pingREQChan:     make(chan content, 1),
-		disconnectChan:  make(chan content, 1),
+		publishChan:     make(chan *content, 1),
+		publishAckChan:  make(chan *content, 1),
+		publishRECChan:  make(chan *content, 1),
+		publishRELChan:  make(chan *content, 1),
+		subscribeChan:   make(chan *content, 1),
+		unsubscribeChan: make(chan *content, 1),
+		pingREQChan:     make(chan *content, 1),
+		disconnectChan:  make(chan *content, 1),
 	}
 
 	go d.processPacket()
@@ -67,7 +67,7 @@ loop:
 			bits := calc.Bytes2Bits(packet.content[0])
 			ctrlPacket := proto.CalcControlPacket(bits[:4])
 			body := packet.content[packet.headerLen:]
-			coder.selectChannel(ctrlPacket, content{bits, body})
+			coder.selectChannel(ctrlPacket, &content{bits, body})
 			coder.decoding = false
 			coder.decodeEndChan <- 1
 		case <-coder.stopChan:
@@ -76,7 +76,7 @@ loop:
 	}
 }
 
-func (coder *decoder) selectChannel(packet proto.MQTTControlPacket, content content) {
+func (coder *decoder) selectChannel(packet proto.MQTTControlPacket, content *content) {
 	switch packet {
 	case proto.PPublish:
 		coder.publishChan <- content

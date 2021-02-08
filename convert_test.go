@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"testing"
+	"time"
 )
 
 func TestConv(t *testing.T) {
@@ -121,7 +122,8 @@ func TestAnd(t *testing.T) {
 
 func TestBuffer(t *testing.T) {
 
-	buffer := bytes.NewBuffer(nil)
+	i := make([]byte, 102400)
+	buffer := bytes.NewBuffer(i)
 	buffer.WriteByte(1)
 	fmt.Println(buffer.Next(1))
 	fmt.Println(buffer.Next(1))
@@ -153,4 +155,27 @@ func TestCalc(t *testing.T) {
 	next := buffer.Next(4)
 	fmt.Println(next)
 
+}
+
+func TestClose(t *testing.T) {
+	c := make(chan struct{}, 1)
+	go func() {
+		time.Sleep(time.Second)
+		close(c)
+	}()
+
+	select {
+	case s := <-c:
+		fmt.Println(s)
+		fmt.Println("1")
+	}
+
+}
+
+func TestNoPayload(t *testing.T) {
+	buffer := bytes.NewBuffer(nil)
+	buffer.Write([]byte{1})
+	buffer.Next(1)
+	next := buffer.Bytes()
+	fmt.Println(next)
 }

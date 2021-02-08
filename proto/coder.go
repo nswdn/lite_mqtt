@@ -48,8 +48,9 @@ const (
 
 // MQTT Control Packet
 const (
-	PConnect MQTTControlPacket = 1
-	PConnACK MQTTControlPacket = 32 // 2
+	PConnect     MQTTControlPacket = 1
+	PConnectAlia MQTTControlPacket = 16
+	PConnACK     MQTTControlPacket = 32 // 2
 
 	PPublish     MQTTControlPacket = 3
 	PPubACK      MQTTControlPacket = 4 // 4
