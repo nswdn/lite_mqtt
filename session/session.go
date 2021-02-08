@@ -162,7 +162,7 @@ func (s *Session) handleSubscribe(remain []byte) error {
 		}
 	}
 
-	go s.asyncSubscribe(max, &subscribe)
+	s.subscribe(max, &subscribe)
 
 	ack := proto.NewSubscribeACK(subscribe.Qos, subscribe.PacketID)
 	_, _ = s.Write(ack)
@@ -170,7 +170,7 @@ func (s *Session) handleSubscribe(remain []byte) error {
 	return nil
 }
 
-func (s *Session) asyncSubscribe(max proto.QOS, subscribe *proto.Subscribe) {
+func (s *Session) subscribe(max proto.QOS, subscribe *proto.Subscribe) {
 	for _, topic := range subscribe.Topic {
 		receiverChan := make(chan []byte, 100)
 		stopChan := make(chan byte)
