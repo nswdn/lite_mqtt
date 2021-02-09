@@ -49,7 +49,10 @@ func (tr *trie) insert(v string, id string, receiver chan<- []byte) *trieNode {
 		node = node.next[str]
 	}
 
-	node.topic = newTopic(v, id, receiver)
+	if node.topic == nil {
+		node.topic = newTopic(v, id, receiver)
+	}
+	node.topic.put(id, receiver)
 	return node
 }
 
@@ -87,7 +90,6 @@ func (tr *trie) delete(v string) string {
 
 func newNode(topicName string) *trieNode {
 	return &trieNode{
-		next:  make(map[string]*trieNode),
-		topic: newTopic(topicName, "", nil),
+		next: make(map[string]*trieNode),
 	}
 }

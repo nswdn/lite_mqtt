@@ -226,9 +226,6 @@ func (s *Session) processConn(received []byte) error {
 
 func (s *Session) Write(b []byte) (int, error) {
 	write, err := s.Conn.Write(b)
-	if err != nil {
-		fmt.Println(err)
-	}
 	return write, err
 }
 
@@ -240,17 +237,17 @@ func (s *Session) Read(b []byte) (int, error) {
 }
 
 func (s *Session) Close() error {
-	if !s.disconnected {
-		trie.Publish(s.Will.Topic, s.Will.Retain, s.Will.Payload)
-	}
-	s.PublishEndChan <- struct{}{}
 	for key, topic := range s.Subscribing {
 		topic.StopChan <- struct{}{}
 		topic.UnsubscribeChan <- s.ClientID
 		delete(s.Subscribing, key)
 	}
-	s.ProcessStopChan <- struct{}{}
 	s.decoder.Close()
+	s.PublishEndChan <- struct{}{}
+	s.ProcessStopChan <- struct{}{}
+	if !s.disconnected {
+		trie.Publish(s.Will.Topic, s.Will.Retain, s.Will.Payload)
+	}
 	return s.Conn.Close()
 }
 

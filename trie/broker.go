@@ -1,6 +1,7 @@
 package trie
 
 import (
+	"log"
 	"sync"
 )
 
@@ -12,7 +13,7 @@ type Topic struct {
 	Name        string
 	Bus         chan string              // listen unsubscribe write clientID in
 	Subscribers map[string]chan<- []byte // key: clientID, value: channel to notify new subscribe message
-	mutex       sync.Mutex
+	mutex       sync.RWMutex
 	retain      retainMessage
 }
 
@@ -35,7 +36,7 @@ var b = &Broker{
 			next: make(map[string]*trieNode),
 		},
 	},
-	publishChan: make(chan publishMessage, 50),
+	publishChan: make(chan publishMessage, 1),
 }
 
 func init() {
@@ -80,11 +81,11 @@ func (broker *Broker) listenPublish() {
 					}
 				}
 
-				match.topic.mutex.Lock()
+				match.topic.mutex.RLock()
 				for _, publishChan = range match.topic.Subscribers {
 					publishChan <- message.payload
 				}
-				match.topic.mutex.Unlock()
+				match.topic.mutex.RUnlock()
 
 			}
 			broker.rwMutex.RUnlock()
@@ -104,15 +105,25 @@ func (to *Topic) listenUnsub() {
 	}
 }
 
+func (to *Topic) put(clientID string, receiver chan<- []byte) {
+	to.mutex.Lock()
+	to.Subscribers[clientID] = receiver
+	to.mutex.Unlock()
+}
+
 func newTopic(name string, id string, receiver chan<- []byte) *Topic {
 	t := &Topic{
 		Name:        name,
 		Bus:         make(chan string, 100),
 		Subscribers: make(map[string]chan<- []byte),
 	}
+
 	if id != empty {
 		t.Subscribers[id] = receiver
 	}
+
 	go t.listenUnsub()
+
+	log.Println("new topic name:", name)
 	return t
 }
