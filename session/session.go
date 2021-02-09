@@ -240,8 +240,7 @@ func (s *Session) Read(b []byte) (int, error) {
 }
 
 func (s *Session) Close() error {
-	if s.disconnected {
-		log.Println(s.Will.Payload)
+	if !s.disconnected {
 		trie.Publish(s.Will.Topic, s.Will.Retain, s.Will.Payload)
 	}
 	s.PublishEndChan <- struct{}{}
