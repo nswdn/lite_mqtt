@@ -8,28 +8,37 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
+type SubscribingTopic struct {
+	UnsubscribeChan chan string // write session id to the channel to broker to stop listening topic's message
+	StopChan        chan byte   // a signal channel to stop select Receiver
+}
+
 type Session struct {
-	decoder         *decoder
-	disconnected    bool
-	Conn            net.Conn
-	ClientID        string
-	Will            proto.Will
-	KeepAlive       int // second
-	LastPingReq     time.Time
+	Conn         net.Conn
+	decoder      *decoder
+	disconnected bool
+	ClientID     string
+	KeepAlive    int // second
+	LastPingReq  time.Time
+	Will         proto.Will
+
 	ProcessStopChan chan byte
 
 	PublishSubsChan chan []byte // this channel brings all subscribing topic's message
 	PublishEndChan  chan byte   // write to this channel to stop select PublishSubsChan when disconnected or error
 
+	mutex       sync.Mutex
 	Subscribing map[string]*SubscribingTopic // subscribing topics. key: topic name, value topic's info
 }
 
 func init() {
 	log.SetFlags(log.Lshortfile | log.Ltime)
 }
+
 func New(conn net.Conn) *Session {
 	session := &Session{
 		decoder:         NewDecoder(),
@@ -83,55 +92,52 @@ func (s *Session) Handle() {
 }
 
 func (s *Session) processInteractive() {
-	var (
-		content content
-		err     error
-	)
+	var content content
+
 loop:
 	for {
 		select {
-		case content = <-s.decoder.publishChan:
-			err = s.handlePublish(content.properties, content.body)
-		case content = <-s.decoder.publishAckChan:
-		case content = <-s.decoder.publishRECChan:
-			s.Write(proto.NewCommonACK(proto.PPubRELAlia, binary.BigEndian.Uint16(content.body)))
-		case content = <-s.decoder.publishRELChan:
-			s.Write(proto.NewCommonACK(proto.PPubCOMPAlia, binary.BigEndian.Uint16(content.body)))
-		case content = <-s.decoder.subscribeChan:
-			err = s.handleSubscribe(content.body)
-		case content = <-s.decoder.unsubscribeChan:
-			err = s.handleUnsubscribe(content.body)
-		case content = <-s.decoder.pingREQChan:
-			err = s.handlePingREQ()
-		case content = <-s.decoder.disconnectChan:
-			err = s.handleDisconnect()
+		case content = <-s.decoder.processedChan:
+			switch content.ctrlPacket {
+			case proto.PPublish:
+				go s.handlePublish(content.properties, content.body)
+			case proto.PPubACK:
+			case proto.PPubREC:
+				s.Write(proto.NewCommonACK(proto.PPubRELAlia, binary.BigEndian.Uint16(content.body)))
+			case proto.PPubREL:
+				s.Write(proto.NewCommonACK(proto.PPubCOMPAlia, binary.BigEndian.Uint16(content.body)))
+			case proto.PPubCOMP:
+			case proto.PSubscribe:
+				go s.handleSubscribe(content.body)
+			case proto.PUnsubscribe:
+				go s.handleUnsubscribe(content.body)
+			case proto.PPingREQ:
+				go s.handlePingREQ()
+			case proto.PDisconnect:
+				go s.handleDisconnect()
+			}
 		case <-s.ProcessStopChan:
 			break loop
 		}
-
-		if err != nil {
-			s.Conn.Close()
-			break loop
-		}
 	}
-
 }
 
-func (s *Session) handleDisconnect() error {
+func (s *Session) handleDisconnect() {
 	s.disconnected = true
-	return errors.New("disconnect")
+	_ = s.Conn.Close()
+	return
 }
 
-func (s *Session) handlePingREQ() error {
+func (s *Session) handlePingREQ() {
 	s.LastPingReq = time.Now()
 	_, _ = s.Write(proto.NewPingRESP())
-	return nil
 }
 
-func (s *Session) handleUnsubscribe(remain []byte) error {
+func (s *Session) handleUnsubscribe(remain []byte) {
 	us := proto.UnSubscribe{}
 	if err := us.Decode(nil, remain); err != nil {
-		return err
+		_ = s.Conn.Close()
+		return
 	}
 
 	// todo unsubscribe
@@ -145,13 +151,14 @@ func (s *Session) handleUnsubscribe(remain []byte) error {
 	ack := proto.NewCommonACK(proto.PUnsubscribeACK, us.PacketID)
 	_, _ = s.Write(ack)
 
-	return nil
+	return
 }
 
-func (s *Session) handleSubscribe(remain []byte) error {
+func (s *Session) handleSubscribe(remain []byte) {
 	subscribe := proto.Subscribe{}
 	if err := subscribe.Decode(nil, remain); err != nil {
-		return err
+		_ = s.Conn.Close()
+		return
 	}
 
 	// todo topic and qos, if subscribe on failure max = 128
@@ -167,10 +174,10 @@ func (s *Session) handleSubscribe(remain []byte) error {
 	ack := proto.NewSubscribeACK(subscribe.Qos, subscribe.PacketID)
 	_, _ = s.Write(ack)
 
-	return nil
 }
 
 func (s *Session) subscribe(max proto.QOS, subscribe *proto.Subscribe) {
+	s.mutex.Lock()
 	for _, topic := range subscribe.Topic {
 		receiverChan := make(chan []byte, 100)
 		stopChan := make(chan byte)
@@ -178,12 +185,14 @@ func (s *Session) subscribe(max proto.QOS, subscribe *proto.Subscribe) {
 		subscribingTopic := NewSubscribeTopic(sessionCloseChan, receiverChan, s.PublishSubsChan, stopChan, topic, max)
 		s.Subscribing[topic] = subscribingTopic
 	}
+	s.mutex.Unlock()
 }
 
-func (s *Session) handlePublish(properties []uint8, remain []byte) error {
+func (s *Session) handlePublish(properties []uint8, remain []byte) {
 	publish := proto.Publish{}
 	if err := publish.Decode(properties, remain); err != nil {
-		return err
+		_ = s.Conn.Close()
+		return
 	}
 
 	// todo listenPublish, if retain == 1 store message
@@ -191,15 +200,12 @@ func (s *Session) handlePublish(properties []uint8, remain []byte) error {
 
 	if publish.Qos == proto.AtLeaseOne {
 		_, _ = s.Write(proto.NewCommonACK(proto.PPubACKAlia, publish.PacketID))
-		return nil
 	}
 
 	if publish.Qos == proto.MustOne {
 		_, _ = s.Write(proto.NewCommonACK(proto.PPubRECAlia, publish.PacketID))
-		return nil
 	}
 
-	return nil
 }
 
 func (s *Session) processConn(received []byte) error {
@@ -264,11 +270,6 @@ loop:
 			break loop
 		}
 	}
-}
-
-type SubscribingTopic struct {
-	UnsubscribeChan chan string // write session id to the channel to broker to stop listening topic's message
-	StopChan        chan byte   // a signal channel to stop select Receiver
 }
 
 // subscribe a new topic. receiver channel will get new message

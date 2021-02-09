@@ -17,14 +17,7 @@ type decoder struct {
 	decodeEndChan chan byte
 	stopChan      chan byte
 
-	publishChan     chan content
-	publishAckChan  chan content
-	publishRECChan  chan content
-	publishRELChan  chan content
-	subscribeChan   chan content
-	unsubscribeChan chan content
-	pingREQChan     chan content
-	disconnectChan  chan content
+	processedChan chan content
 }
 
 type newMessage struct {
@@ -33,6 +26,7 @@ type newMessage struct {
 }
 
 type content struct {
+	ctrlPacket proto.MQTTControlPacket
 	properties []uint8
 	body       []byte
 }
@@ -43,15 +37,7 @@ func NewDecoder() *decoder {
 		decodeEndChan: make(chan byte, 1),
 		newMsgChan:    make(chan newMessage, 1),
 		stopChan:      make(chan byte, 1),
-
-		publishChan:     make(chan content, 1),
-		publishAckChan:  make(chan content, 1),
-		publishRECChan:  make(chan content, 1),
-		publishRELChan:  make(chan content, 1),
-		subscribeChan:   make(chan content, 1),
-		unsubscribeChan: make(chan content, 1),
-		pingREQChan:     make(chan content, 1),
-		disconnectChan:  make(chan content, 1),
+		processedChan: make(chan content, 10),
 	}
 
 	go d.processPacket()
@@ -59,14 +45,21 @@ func NewDecoder() *decoder {
 }
 
 func (coder *decoder) processPacket() {
+	var (
+		bits       []byte
+		ctrlPacket proto.MQTTControlPacket
+		body       []byte
+		dst        []byte
+	)
 loop:
 	for {
 		select {
 		case packet := <-coder.newMsgChan:
-			bits := calc.Bytes2Bits(packet.content[0])
-			ctrlPacket := proto.CalcControlPacket(bits[:4])
-			body := packet.content[packet.headerLen:]
-			coder.selectChannel(ctrlPacket, content{bits[4:], body})
+			bits = calc.Bytes2Bits(packet.content[0])
+			ctrlPacket = proto.CalcControlPacket(bits[:4])
+			body = packet.content[packet.headerLen:]
+			dst = deepCopy(body)
+			coder.processedChan <- content{ctrlPacket, bits[4:], dst}
 			coder.decoding = false
 			coder.decodeEndChan <- 1
 		case <-coder.stopChan:
@@ -75,26 +68,10 @@ loop:
 	}
 }
 
-func (coder *decoder) selectChannel(packet proto.MQTTControlPacket, content content) {
-	switch packet {
-	case proto.PPublish:
-		coder.publishChan <- content
-	case proto.PPubACK:
-		coder.publishAckChan <- content
-	case proto.PPubREC:
-		coder.publishRECChan <- content
-	case proto.PPubREL:
-		coder.publishRELChan <- content
-	case proto.PSubscribe:
-		coder.subscribeChan <- content
-	case proto.PUnsubscribe:
-		coder.unsubscribeChan <- content
-	case proto.PPingREQ:
-		coder.pingREQChan <- content
-	case proto.PDisconnect:
-		coder.disconnectChan <- content
-
-	}
+func deepCopy(src []byte) []byte {
+	dst := make([]byte, len(src))
+	copy(dst, src)
+	return dst
 }
 
 func (coder *decoder) decode(in []byte) {

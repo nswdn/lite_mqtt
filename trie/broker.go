@@ -4,13 +4,16 @@ import (
 	"sync"
 )
 
+type retainMessage []byte
+
+var emptyRetain retainMessage = nil
+
 type Topic struct {
 	Name        string
 	Bus         chan string              // listen unsubscribe write clientID in
 	Subscribers map[string]chan<- []byte // key: clientID, value: channel to notify new subscribe message
 	mutex       sync.Mutex
-	hasRetain   bool
-	retain      publishMessage
+	retain      retainMessage
 }
 
 type publishMessage struct {
@@ -46,8 +49,8 @@ func GetTopic(topicName, clientID string, receiver chan<- []byte) chan string {
 	result := b.topicTrie.insert(topicName, clientID, receiver)
 
 	retainMsg := result.topic.retain
-	if result.topic.hasRetain {
-		receiver <- retainMsg.payload
+	if result.topic.retain != nil {
+		receiver <- retainMsg
 	}
 
 	return result.topic.Bus
@@ -71,10 +74,9 @@ func (broker *Broker) listenPublish() {
 			if match = broker.topicTrie.match(message.topic); match != nil {
 				if message.retain == true {
 					if len(message.payload) > 0 {
-						match.topic.retain = message
-						match.topic.hasRetain = true
+						match.topic.retain = message.payload
 					} else {
-						match.topic.hasRetain = false
+						match.topic.retain = emptyRetain
 					}
 				}
 
