@@ -34,14 +34,12 @@ func main() {
 		panic(err)
 	}
 
-	var s *session.Session
 	for {
 		conn, err := listen.Accept()
 		if err != nil {
 			return
 		}
-		s = session.New(conn)
-		go s.Handle()
+		go session.Handle(conn)
 	}
 
 }

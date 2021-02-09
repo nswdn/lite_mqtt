@@ -179,3 +179,15 @@ func TestNoPayload(t *testing.T) {
 	next := buffer.Bytes()
 	fmt.Println(next)
 }
+
+func TestBlockChan(t *testing.T) {
+	c := make(chan struct{})
+	go func() {
+		select {
+		case <-c:
+			fmt.Println(2)
+		}
+	}()
+	c <- struct{}{}
+	fmt.Println(1)
+}

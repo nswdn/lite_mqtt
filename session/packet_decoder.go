@@ -14,8 +14,8 @@ type decoder struct {
 	headerLen int
 
 	newMsgChan    chan newMessage
-	decodeEndChan chan byte
-	stopChan      chan byte
+	decodeEndChan chan struct{}
+	stopChan      chan struct{}
 
 	processedChan chan content
 }
@@ -34,9 +34,9 @@ type content struct {
 func NewDecoder() *decoder {
 	d := &decoder{
 		store:         bytes.NewBuffer(nil),
-		decodeEndChan: make(chan byte, 1),
 		newMsgChan:    make(chan newMessage, 1),
-		stopChan:      make(chan byte, 1),
+		decodeEndChan: make(chan struct{}),
+		stopChan:      make(chan struct{}),
 		processedChan: make(chan content, 10),
 	}
 
@@ -61,7 +61,7 @@ loop:
 			dst = deepCopy(body)
 			coder.processedChan <- content{ctrlPacket, bits[4:], dst}
 			coder.decoding = false
-			coder.decodeEndChan <- 1
+			coder.decodeEndChan <- struct{}{}
 		case <-coder.stopChan:
 			break loop
 		}
@@ -104,7 +104,7 @@ func (coder *decoder) decode(in []byte) {
 }
 
 func (coder *decoder) Close() {
-	coder.stopChan <- 1
+	coder.stopChan <- struct{}{}
 }
 
 func calcRemaining(remaining []byte) (int, int, error) {
