@@ -102,7 +102,7 @@ loop:
 		case content = <-s.decoder.processedChan:
 			switch content.ctrlPacket {
 			case proto.PPublish:
-				s.handlePublish(content.properties, content.body)
+				go s.handlePublish(content.properties, content.body)
 			case proto.PPubACK:
 			case proto.PPubREC:
 				s.Write(proto.NewCommonACK(proto.PPubRELAlia, binary.BigEndian.Uint16(content.body)))
@@ -110,13 +110,13 @@ loop:
 				s.Write(proto.NewCommonACK(proto.PPubCOMPAlia, binary.BigEndian.Uint16(content.body)))
 			case proto.PPubCOMP:
 			case proto.PSubscribe:
-				s.handleSubscribe(content.body)
+				go s.handleSubscribe(content.body)
 			case proto.PUnsubscribe:
-				s.handleUnsubscribe(content.body)
+				go s.handleUnsubscribe(content.body)
 			case proto.PPingREQ:
-				s.handlePingREQ()
+				go s.handlePingREQ()
 			case proto.PDisconnect:
-				s.handleDisconnect()
+				go s.handleDisconnect()
 			}
 		case <-s.ProcessStopChan:
 			break loop
