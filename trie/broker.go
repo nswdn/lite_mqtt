@@ -11,7 +11,6 @@ var emptyRetain retainMessage = nil
 
 type Topic struct {
 	Name        string
-	Bus         chan string              // listen unsubscribe write clientID in
 	Subscribers map[string]chan<- []byte // key: clientID, value: channel to notify new subscribe message
 	mutex       sync.RWMutex
 	retain      retainMessage
@@ -43,7 +42,7 @@ func init() {
 	go b.listenPublish()
 }
 
-func GetTopic(topicName, clientID string, receiver chan<- []byte) chan string {
+func Subscribe(topicName, clientID string, receiver chan<- []byte) {
 	b.rwMutex.Lock()
 	defer b.rwMutex.Unlock()
 
@@ -53,8 +52,17 @@ func GetTopic(topicName, clientID string, receiver chan<- []byte) chan string {
 	if result.topic.retain != nil {
 		receiver <- retainMsg
 	}
+}
 
-	return result.topic.Bus
+func Unsubscribe(topicNames []string, clientID string) {
+	b.rwMutex.RLock()
+	for _, topicName := range topicNames {
+		if match := b.topicTrie.match(topicName); match != nil {
+			match.topic.unsubscribe(clientID)
+		}
+	}
+
+	b.rwMutex.RUnlock()
 }
 
 func Publish(topic string, retain bool, payload []byte) {
@@ -93,16 +101,10 @@ func (broker *Broker) listenPublish() {
 	}
 }
 
-func (to *Topic) listenUnsub() {
-	var clientID string
-	for {
-		select {
-		case clientID = <-to.Bus:
-			to.mutex.Lock()
-			delete(to.Subscribers, clientID)
-			to.mutex.Unlock()
-		}
-	}
+func (to *Topic) unsubscribe(clientID string) {
+	to.mutex.Lock()
+	delete(to.Subscribers, clientID)
+	to.mutex.Unlock()
 }
 
 func (to *Topic) put(clientID string, receiver chan<- []byte) {
@@ -114,15 +116,12 @@ func (to *Topic) put(clientID string, receiver chan<- []byte) {
 func newTopic(name string, id string, receiver chan<- []byte) *Topic {
 	t := &Topic{
 		Name:        name,
-		Bus:         make(chan string, 100),
 		Subscribers: make(map[string]chan<- []byte),
 	}
 
 	if id != empty {
 		t.Subscribers[id] = receiver
 	}
-
-	go t.listenUnsub()
 
 	log.Println("new topic name:", name)
 	return t

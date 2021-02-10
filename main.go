@@ -39,7 +39,8 @@ func main() {
 		if err != nil {
 			return
 		}
-		go session.Handle(conn)
+		s := session.New(conn)
+		go s.Handle()
 	}
 
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math/rand"
+	"net"
 	"testing"
 	"time"
 )
@@ -190,4 +191,44 @@ func TestBlockChan(t *testing.T) {
 	}()
 	c <- struct{}{}
 	fmt.Println(1)
+}
+
+func TestW(t *testing.T) {
+	c := make(chan byte)
+	close(c)
+	c <- 1
+}
+
+func TestInterrupt(t *testing.T) {
+	c := make(chan byte, 2)
+
+	close(c)
+	_, ok := <-c
+	fmt.Println(ok)
+}
+
+func TestDeadlockWrite(t *testing.T) {
+	go func() {
+		dial, _ := net.Dial("tcp", "127.0.0.1:7777")
+		dial.Write([]byte{123})
+		time.Sleep(time.Second * 5)
+		dial.Write([]byte{123})
+		fmt.Println("write end")
+	}()
+	listen, _ := net.Listen("tcp", "127.0.0.1:7777")
+	c, _ := listen.Accept()
+	i := make([]byte, 1024)
+	read, err := c.Read(i)
+	fmt.Println(read, err)
+}
+
+func TestCapMap(t *testing.T) {
+	m := make(map[int]int, 200)
+	m[0] = 1
+	delete(m, 0)
+	fmt.Println(len(m))
+}
+
+func TestToString(t *testing.T) {
+	fmt.Println(string([]byte{4, 116, 101, 115}))
 }

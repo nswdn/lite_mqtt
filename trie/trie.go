@@ -43,7 +43,7 @@ func (tr *trie) insert(v string, id string, receiver chan<- []byte) *trieNode {
 	for _, str := range split {
 		_, ok := node.next[str]
 		if !ok {
-			node.next[str] = newNode(v)
+			node.next[str] = newNode()
 		}
 		node.size++
 		node = node.next[str]
@@ -71,6 +71,7 @@ func (tr *trie) match(v string) *trieNode {
 	return node
 }
 
+// Deprecated
 func (tr *trie) delete(v string) string {
 	split := strings.Split(v, splitter)
 	var node = tr.root
@@ -88,7 +89,7 @@ func (tr *trie) delete(v string) string {
 	return v
 }
 
-func newNode(topicName string) *trieNode {
+func newNode() *trieNode {
 	return &trieNode{
 		next: make(map[string]*trieNode),
 	}
