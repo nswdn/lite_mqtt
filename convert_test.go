@@ -232,3 +232,15 @@ func TestCapMap(t *testing.T) {
 func TestToString(t *testing.T) {
 	fmt.Println(string([]byte{4, 116, 101, 115}))
 }
+
+func TestDeloySelect(t *testing.T) {
+	ints := make(chan int, 10)
+	go func() {
+		time.Sleep(time.Second)
+		select {
+		case _, ok := <-ints:
+			fmt.Println(ok)
+		}
+	}()
+	close(ints)
+}

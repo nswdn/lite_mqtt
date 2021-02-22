@@ -39,12 +39,7 @@ func main() {
 		if err != nil {
 			return
 		}
-		go handle(conn)
+		go session.New(conn)
 	}
 
-}
-
-func handle(conn net.Conn) {
-	s := session.New(conn)
-	go s.Handle()
 }

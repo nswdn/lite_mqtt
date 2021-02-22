@@ -27,33 +27,33 @@ type Session struct {
 	LastPingReq  time.Time
 	Will         proto.Will
 
+	wg              *sync.WaitGroup
 	ProcessStopChan chan struct{}
 
 	mutex       sync.Mutex
 	Subscribing map[string]*SubscribingTopic // subscribing topics. key: topic name, value topic's info
+
+	closed bool
 }
 
 var (
-	clogger, cllogger, lilogger *log.Logger
+	clogger *log.Logger
 )
 
 func init() {
 	c, _ := os.OpenFile("connected.txt", os.O_TRUNC|os.O_CREATE|os.O_WRONLY, os.ModePerm)
-	cl, _ := os.OpenFile("closed.txt", os.O_TRUNC|os.O_CREATE|os.O_WRONLY, os.ModePerm)
-	li, _ := os.OpenFile("listen.txt", os.O_TRUNC|os.O_CREATE|os.O_WRONLY, os.ModePerm)
-	clogger = log.New(io.MultiWriter(c, os.Stdout), "", log.Ltime|log.Lshortfile)
-	cllogger = log.New(io.MultiWriter(cl, os.Stdout), "", log.Ltime|log.Lshortfile)
-	lilogger = log.New(io.MultiWriter(li, os.Stdout), "", 0)
+	clogger = log.New(io.MultiWriter(c, os.Stdout), "", 0)
 	log.SetFlags(log.Lshortfile | log.Ltime)
 }
 
-func New(conn net.Conn) *Session {
+func New(conn net.Conn) {
 	session := &Session{
+		wg:              &sync.WaitGroup{},
 		Conn:            conn,
 		Subscribing:     make(map[string]*SubscribingTopic),
 		ProcessStopChan: make(chan struct{}),
 	}
-	return session
+	session.Handle()
 }
 
 func (s *Session) Handle() {
@@ -75,10 +75,7 @@ func (s *Session) Handle() {
 		return
 	}
 
-	clogger.Println(s.ClientID, "connected")
 	s.decoder = NewDecoder()
-
-	go s.processInteractive()
 
 	// fixed header maximum length 5 bytes.
 	// last byte of headerLen length x: 128 > x > 0, previous bytes y: 256 > y > 0.
@@ -89,38 +86,36 @@ func (s *Session) Handle() {
 			_ = s.Close()
 			return
 		}
-		s.decoder.decode(bytes[:n])
+		decoded, err := s.decoder.decode(bytes[:n])
+		if err != nil {
+			continue
+		}
+		s.processInteractive(decoded)
 	}
 }
 
-func (s *Session) processInteractive() {
-	var content content
+func (s *Session) processInteractive(content content) {
 
-loop:
-	for {
-		select {
-		case content = <-s.decoder.processedChan:
-			switch content.ctrlPacket {
-			case proto.PPublish:
-				go s.handlePublish(content.properties, content.body)
-			case proto.PPubACK:
-			case proto.PPubREC:
-				s.Write(proto.NewCommonACK(proto.PPubRELAlia, binary.BigEndian.Uint16(content.body)))
-			case proto.PPubREL:
-				s.Write(proto.NewCommonACK(proto.PPubCOMPAlia, binary.BigEndian.Uint16(content.body)))
-			case proto.PPubCOMP:
-			case proto.PSubscribe:
-				go s.handleSubscribe(content.body)
-			case proto.PUnsubscribe:
-				go s.handleUnsubscribe(content.body)
-			case proto.PPingREQ:
-				go s.handlePingREQ()
-			case proto.PDisconnect:
-				go s.handleDisconnect()
-			}
-		case <-s.ProcessStopChan:
-			break loop
-		}
+	switch content.ctrlPacket {
+	case proto.PPublish:
+		s.handlePublish(content.properties, content.body)
+	case proto.PPubACK:
+	case proto.PPubREC:
+		_, _ = s.Write(proto.NewCommonACK(proto.PPubRELAlia, binary.BigEndian.Uint16(content.body)))
+	case proto.PPubREL:
+		_, _ = s.Write(proto.NewCommonACK(proto.PPubCOMPAlia, binary.BigEndian.Uint16(content.body)))
+	case proto.PPubCOMP:
+	case proto.PSubscribe:
+		clogger.Println(&s)
+		go s.handleSubscribe(content.body)
+	case proto.PUnsubscribe:
+		s.handleUnsubscribe(content.body)
+	case proto.PPingREQ:
+		s.handlePingREQ()
+	case proto.PDisconnect:
+		s.handleDisconnect()
+	default:
+		_ = s.Conn.Close()
 	}
 }
 
@@ -158,6 +153,8 @@ func (s *Session) handleUnsubscribe(remain []byte) {
 }
 
 func (s *Session) handleSubscribe(remain []byte) {
+	clogger.Println(&s)
+
 	subscribe := proto.Subscribe{}
 	if err := subscribe.Decode(nil, remain); err != nil {
 		_ = s.Conn.Close()
@@ -172,22 +169,35 @@ func (s *Session) handleSubscribe(remain []byte) {
 		}
 	}
 
-	s.subscribe(max, subscribe)
-	lilogger.Printf("%p\n", s)
-
 	ack := proto.NewSubscribeACK(subscribe.Qos, subscribe.PacketID)
 	_, _ = s.Write(ack)
-
+	s.subscribe(max, subscribe)
 }
 
 func (s *Session) subscribe(max proto.QOS, subscribe proto.Subscribe) {
+
+	if s.closed {
+		return
+	}
+
+	receiverChan := make(chan []byte, 100)
+	trie.Subscribe(subscribe.Topic[0], s.ClientID, receiverChan)
 	s.mutex.Lock()
-	for _, topic := range subscribe.Topic {
-		receiverChan := make(chan []byte, 100)
-		trie.Subscribe(topic, s.ClientID, receiverChan)
-		s.NewSubscribeTopic(receiverChan, topic, max)
+	s.Subscribing[subscribe.Topic[0]] = &SubscribingTopic{
+		ReceiveChan: receiverChan,
 	}
 	s.mutex.Unlock()
+	s.listenSubscribe(receiverChan, subscribe.Topic[0], max)
+
+	//for _, topic := range subscribe.Topic {
+	//	receiverChan := make(chan []byte, 100)
+	//	trie.Subscribe(topic, s.ClientID, receiverChan)
+	//	s.Subscribing[topic] = &SubscribingTopic{
+	//		ReceiveChan: receiverChan,
+	//	}
+	//	t := topic
+	//	go s.listenSubscribe(receiverChan, t, max)
+	//}
 }
 
 func (s *Session) handlePublish(properties []uint8, remain []byte) {
@@ -243,6 +253,8 @@ func (s *Session) Read(b []byte) (int, error) {
 func (s *Session) Close() error {
 	var i = 0
 	s.mutex.Lock()
+	s.closed = true
+
 	topicNames := make([]string, len(s.Subscribing))
 	for topicName := range s.Subscribing {
 		topicNames[i] = topicName
@@ -258,26 +270,14 @@ func (s *Session) Close() error {
 	s.mutex.Unlock()
 
 	s.decoder.Close()
-	s.ProcessStopChan <- struct{}{}
 	if !s.disconnected {
 		trie.Publish(s.Will.Topic, s.Will.Retain, s.Will.Payload)
 	}
 	return s.Conn.Close()
 }
 
-// subscribe a new topic. receiver channel will get new message
-func (s *Session) NewSubscribeTopic(receiver chan []byte, topic string, qos proto.QOS) {
-
-	// todo qos
-	s.Subscribing[topic] = &SubscribingTopic{
-		ReceiveChan: receiver,
-	}
-
-	go s.listenSubscribe(receiver, topic, qos)
-
-}
-
 func (s *Session) listenSubscribe(receiveChan chan []byte, topic string, qos proto.QOS) {
+
 loop:
 	for {
 		select {

@@ -68,13 +68,27 @@ loop:
 	}
 }
 
+func unPacket(header int, packet []byte) content {
+	var (
+		bits       []byte
+		ctrlPacket proto.MQTTControlPacket
+		body       []byte
+		dst        []byte
+	)
+	bits = calc.Bytes2Bits(packet[0])
+	ctrlPacket = proto.CalcControlPacket(bits[:4])
+	body = packet[header:]
+	dst = deepCopy(body)
+	return content{ctrlPacket, bits[4:], dst}
+}
+
 func deepCopy(src []byte) []byte {
 	dst := make([]byte, len(src))
 	copy(dst, src)
 	return dst
 }
 
-func (coder *decoder) decode(in []byte) {
+func (coder *decoder) decode(in []byte) (content, error) {
 	coder.store.Write(in)
 	for {
 		if coder.store.Len() >= 2 {
@@ -92,15 +106,17 @@ func (coder *decoder) decode(in []byte) {
 			}
 
 			if coder.store.Len() < coder.totalLen {
-				return
+				return content{}, errors.New("invalid length")
 			}
 
 			fullPacket := coder.store.Next(coder.totalLen)
-			coder.newMsgChan <- newMessage{coder.headerLen, fullPacket}
-			<-coder.decodeEndChan
+			return unPacket(coder.headerLen, fullPacket), nil
+
 		}
 		break
 	}
+
+	return content{}, errors.New("invalid length")
 }
 
 func (coder *decoder) Close() {
