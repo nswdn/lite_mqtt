@@ -40,7 +40,7 @@ func NewDecoder() *decoder {
 		processedChan: make(chan content, 10),
 	}
 
-	go d.processPacket()
+	//go d.processPacket()
 	return d
 }
 

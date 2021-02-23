@@ -27,13 +27,11 @@ type Session struct {
 	LastPingReq  time.Time
 	Will         proto.Will
 
-	wg              *sync.WaitGroup
-	ProcessStopChan chan struct{}
-
 	mutex       sync.Mutex
 	Subscribing map[string]*SubscribingTopic // subscribing topics. key: topic name, value topic's info
 
-	closed bool
+	ProcessStopChan chan struct{}
+	closed          bool
 }
 
 var (
@@ -48,15 +46,13 @@ func init() {
 
 func New(conn net.Conn) {
 	session := &Session{
-		wg:              &sync.WaitGroup{},
 		Conn:            conn,
 		Subscribing:     make(map[string]*SubscribingTopic),
 		ProcessStopChan: make(chan struct{}),
 	}
-	session.Handle()
+	handle(session)
 }
-
-func (s *Session) Handle() {
+func handle(s *Session) {
 	var (
 		n     int
 		err   error
@@ -106,7 +102,6 @@ func (s *Session) processInteractive(content content) {
 		_, _ = s.Write(proto.NewCommonACK(proto.PPubCOMPAlia, binary.BigEndian.Uint16(content.body)))
 	case proto.PPubCOMP:
 	case proto.PSubscribe:
-		clogger.Println(&s)
 		go s.handleSubscribe(content.body)
 	case proto.PUnsubscribe:
 		s.handleUnsubscribe(content.body)
