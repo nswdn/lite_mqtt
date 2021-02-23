@@ -86,7 +86,7 @@ func handle(s *Session) {
 		if err != nil {
 			continue
 		}
-		s.processInteractive(decoded)
+		go s.processInteractive(decoded)
 	}
 }
 
@@ -102,7 +102,7 @@ func (s *Session) processInteractive(content content) {
 		_, _ = s.Write(proto.NewCommonACK(proto.PPubCOMPAlia, binary.BigEndian.Uint16(content.body)))
 	case proto.PPubCOMP:
 	case proto.PSubscribe:
-		go s.handleSubscribe(content.body)
+		s.handleSubscribe(content.body)
 	case proto.PUnsubscribe:
 		s.handleUnsubscribe(content.body)
 	case proto.PPingREQ:
@@ -166,7 +166,7 @@ func (s *Session) handleSubscribe(remain []byte) {
 
 	ack := proto.NewSubscribeACK(subscribe.Qos, subscribe.PacketID)
 	_, _ = s.Write(ack)
-	s.subscribe(max, subscribe)
+	go s.subscribe(max, subscribe)
 }
 
 func (s *Session) subscribe(max proto.QOS, subscribe proto.Subscribe) {
@@ -281,8 +281,8 @@ loop:
 			}
 			publish, err := proto.NewPublish(0, qos, 0, topic, msg)
 			if err != nil {
-				log.Println(err)
-				continue
+				s.Close()
+				break loop
 			}
 			_, _ = s.Conn.Write(publish)
 		}

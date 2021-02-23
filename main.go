@@ -2,6 +2,7 @@ package main
 
 import (
 	"excel_parser/session"
+	"log"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
@@ -28,6 +29,8 @@ func main() {
 	} else {
 		listen, err = net.Listen("tcp", addr)
 	}
+
+	log.Println("mqtt server start up with tls:", tlsMode)
 
 	if err != nil {
 		panic(err)
