@@ -264,7 +264,6 @@ func (s *Session) Close() error {
 
 	s.mutex.Unlock()
 
-	s.decoder.Close()
 	if !s.disconnected {
 		trie.Publish(s.Will.Topic, s.Will.Retain, s.Will.Payload)
 	}
