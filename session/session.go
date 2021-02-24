@@ -88,7 +88,7 @@ func handle(s *Session) {
 			continue
 		}
 
-		go s.processInteractive(decoded)
+		s.processInteractive(decoded)
 	}
 
 }
@@ -239,19 +239,19 @@ func (s *Session) Close() error {
 	var i = 0
 
 	sessionStore.delete(s.ClientID)
-	s.mutex.Lock()
-	topicNames := make([]string, len(s.Subscribing))
-	for topicName := range s.Subscribing {
-		topicNames[i] = topicName
-		i++
-	}
-	trie.Unsubscribe(topicNames, s.ClientID)
 
+	topicNames := make([]string, len(s.Subscribing))
+
+	s.mutex.Lock()
 	for topicName, topic := range s.Subscribing {
+		topicNames[i] = topicName
 		close(topic.ReceiveChan)
 		delete(s.Subscribing, topicName)
+		i++
 	}
 	s.mutex.Unlock()
+
+	trie.Unsubscribe(topicNames, s.ClientID)
 
 	if !s.disconnected {
 		trie.Publish(s.Will.Topic, s.Will.Retain, s.Will.Payload)
