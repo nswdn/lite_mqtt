@@ -20,7 +20,6 @@ type SubscribingTopic struct {
 
 type Session struct {
 	Conn         net.Conn
-	decoder      *decoder
 	disconnected bool
 	ClientID     string
 	KeepAlive    int // second
@@ -31,7 +30,6 @@ type Session struct {
 	Subscribing map[string]*SubscribingTopic // subscribing topics. key: topic name, value topic's info
 
 	ProcessStopChan chan struct{}
-	closed          bool
 }
 
 var (
@@ -52,6 +50,7 @@ func New(conn net.Conn) {
 	}
 	handle(session)
 }
+
 func handle(s *Session) {
 	var (
 		n     int
@@ -71,7 +70,9 @@ func handle(s *Session) {
 		return
 	}
 
-	s.decoder = NewDecoder()
+	log.Println(s.ClientID)
+
+	decoder := NewDecoder()
 
 	// fixed header maximum length 5 bytes.
 	// last byte of headerLen length x: 128 > x > 0, previous bytes y: 256 > y > 0.
@@ -82,12 +83,14 @@ func handle(s *Session) {
 			_ = s.Close()
 			return
 		}
-		decoded, err := s.decoder.decode(bytes[:n])
+		decoded, err := decoder.decode(bytes[:n])
 		if err != nil {
 			continue
 		}
-		go s.processInteractive(decoded)
+
+		s.processInteractive(decoded)
 	}
+
 }
 
 func (s *Session) processInteractive(content content) {
@@ -148,7 +151,6 @@ func (s *Session) handleUnsubscribe(remain []byte) {
 }
 
 func (s *Session) handleSubscribe(remain []byte) {
-	clogger.Println(&s)
 
 	subscribe := proto.Subscribe{}
 	if err := subscribe.Decode(nil, remain); err != nil {
@@ -170,29 +172,15 @@ func (s *Session) handleSubscribe(remain []byte) {
 }
 
 func (s *Session) subscribe(max proto.QOS, subscribe proto.Subscribe) {
-
-	if s.closed {
-		return
+	for _, topic := range subscribe.Topic {
+		receiverChan := make(chan []byte, 100)
+		trie.Subscribe(topic, s.ClientID, receiverChan)
+		s.Subscribing[topic] = &SubscribingTopic{
+			ReceiveChan: receiverChan,
+		}
+		t := topic
+		go s.listenSubscribe(receiverChan, t, max)
 	}
-
-	receiverChan := make(chan []byte, 100)
-	trie.Subscribe(subscribe.Topic[0], s.ClientID, receiverChan)
-	s.mutex.Lock()
-	s.Subscribing[subscribe.Topic[0]] = &SubscribingTopic{
-		ReceiveChan: receiverChan,
-	}
-	s.mutex.Unlock()
-	s.listenSubscribe(receiverChan, subscribe.Topic[0], max)
-
-	//for _, topic := range subscribe.Topic {
-	//	receiverChan := make(chan []byte, 100)
-	//	trie.Subscribe(topic, s.ClientID, receiverChan)
-	//	s.Subscribing[topic] = &SubscribingTopic{
-	//		ReceiveChan: receiverChan,
-	//	}
-	//	t := topic
-	//	go s.listenSubscribe(receiverChan, t, max)
-	//}
 }
 
 func (s *Session) handlePublish(properties []uint8, remain []byte) {
@@ -229,6 +217,8 @@ func (s *Session) processConn(received []byte) error {
 	s.ClientID = connect.ClientID
 	s.KeepAlive = connect.KeepAlive
 
+	sessionStore.put(s.ClientID, s)
+
 	_, _ = s.Write(proto.NewConnACK(proto.ConnAccept))
 	return nil
 }
@@ -247,9 +237,9 @@ func (s *Session) Read(b []byte) (int, error) {
 
 func (s *Session) Close() error {
 	var i = 0
-	s.mutex.Lock()
-	s.closed = true
 
+	sessionStore.delete(s.ClientID)
+	s.mutex.Lock()
 	topicNames := make([]string, len(s.Subscribing))
 	for topicName := range s.Subscribing {
 		topicNames[i] = topicName
@@ -261,7 +251,6 @@ func (s *Session) Close() error {
 		close(topic.ReceiveChan)
 		delete(s.Subscribing, topicName)
 	}
-
 	s.mutex.Unlock()
 
 	if !s.disconnected {
@@ -281,7 +270,7 @@ loop:
 			}
 			publish, err := proto.NewPublish(0, qos, 0, topic, msg)
 			if err != nil {
-				s.Close()
+				_ = s.Conn.Close()
 				break loop
 			}
 			_, _ = s.Conn.Write(publish)

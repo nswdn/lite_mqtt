@@ -12,17 +12,6 @@ type decoder struct {
 	decoding  bool
 	totalLen  int
 	headerLen int
-
-	newMsgChan    chan newMessage
-	decodeEndChan chan struct{}
-	stopChan      chan struct{}
-
-	processedChan chan content
-}
-
-type newMessage struct {
-	headerLen int
-	content   []byte
 }
 
 type content struct {
@@ -33,39 +22,11 @@ type content struct {
 
 func NewDecoder() *decoder {
 	d := &decoder{
-		store:         bytes.NewBuffer(nil),
-		newMsgChan:    make(chan newMessage, 1),
-		decodeEndChan: make(chan struct{}),
-		stopChan:      make(chan struct{}),
-		processedChan: make(chan content, 10),
+		store: bytes.NewBuffer(nil),
 	}
 
 	//go d.processPacket()
 	return d
-}
-
-func (coder *decoder) processPacket() {
-	var (
-		bits       []byte
-		ctrlPacket proto.MQTTControlPacket
-		body       []byte
-		dst        []byte
-	)
-loop:
-	for {
-		select {
-		case packet := <-coder.newMsgChan:
-			bits = calc.Bytes2Bits(packet.content[0])
-			ctrlPacket = proto.CalcControlPacket(bits[:4])
-			body = packet.content[packet.headerLen:]
-			dst = deepCopy(body)
-			coder.processedChan <- content{ctrlPacket, bits[4:], dst}
-			coder.decoding = false
-			coder.decodeEndChan <- struct{}{}
-		case <-coder.stopChan:
-			break loop
-		}
-	}
 }
 
 func unPacket(header int, packet []byte) content {
@@ -110,6 +71,7 @@ func (coder *decoder) decode(in []byte) (content, error) {
 			}
 
 			fullPacket := coder.store.Next(coder.totalLen)
+			coder.store = bytes.NewBuffer(coder.store.Bytes())
 			return unPacket(coder.headerLen, fullPacket), nil
 
 		}
@@ -117,10 +79,6 @@ func (coder *decoder) decode(in []byte) (content, error) {
 	}
 
 	return content{}, errors.New("invalid length")
-}
-
-func (coder *decoder) Close() {
-	coder.stopChan <- struct{}{}
 }
 
 func calcRemaining(remaining []byte) (int, int, error) {
