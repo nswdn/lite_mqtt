@@ -88,7 +88,7 @@ func handle(s *Session) {
 			continue
 		}
 
-		s.processInteractive(decoded)
+		go s.processInteractive(decoded)
 	}
 
 }
