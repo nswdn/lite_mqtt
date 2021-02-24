@@ -245,13 +245,12 @@ func (s *Session) Close() error {
 	s.mutex.Lock()
 	for topicName, topic := range s.Subscribing {
 		topicNames[i] = topicName
+		trie.Unsubscribe(topicNames, s.ClientID)
 		close(topic.ReceiveChan)
 		delete(s.Subscribing, topicName)
 		i++
 	}
 	s.mutex.Unlock()
-
-	trie.Unsubscribe(topicNames, s.ClientID)
 
 	if !s.disconnected {
 		trie.Publish(s.Will.Topic, s.Will.Retain, s.Will.Payload)
