@@ -36,3 +36,7 @@ func (m *mysqlDB) save(clientID string, content []byte) error {
 	_, err := m.conn.Exec(m.saveSQL, clientID, string(content))
 	return err
 }
+
+func (m *mysqlDB) close() error {
+	return m.conn.Close()
+}

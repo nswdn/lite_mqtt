@@ -8,6 +8,7 @@ import (
 type author interface {
 	auth(user, pwd string) (bool, error)
 	save(clientID string, content []byte) error
+	close() error
 }
 
 var db author
@@ -48,4 +49,8 @@ func Save(clientID string, content []byte) bool {
 		log.Println(err)
 	}
 	return err == nil
+}
+
+func Close() error {
+	return db.close()
 }
