@@ -3,8 +3,8 @@ package session
 import (
 	"encoding/binary"
 	"errors"
-	"excel_parser/author"
 	"excel_parser/config"
+	"excel_parser/database"
 	"excel_parser/proto"
 	"excel_parser/trie"
 	"fmt"
@@ -193,6 +193,10 @@ func (s *Session) handlePublish(properties []uint8, remain []byte) {
 		return
 	}
 
+	if config.SavePublish() {
+		database.Save(s.ClientID, publish.Payload)
+	}
+
 	trie.Publish(publish.Topic, publish.Retain, publish.Payload)
 
 	if publish.Qos == proto.AtLeaseOne {
@@ -217,7 +221,7 @@ func (s *Session) processConn(received []byte) error {
 	}
 
 	if config.EnableAuth() {
-		if !author.Auth(connect.User, connect.Pwd) {
+		if !database.Auth(connect.User, connect.Pwd) {
 			_, _ = s.Write(proto.NewConnACK(proto.ConnBadUserPwd))
 			return errors.New("auth failed")
 		}

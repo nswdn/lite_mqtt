@@ -1,6 +1,14 @@
 {
-  "auth_enable": true,
-  "auth_type": "mysql",
-  "query_sql": "select * from user where user = ? and pwd = ?",
-  "data_source": "root:123456@tcp(127.0.0.1:3306)/test"
+  "tls_mode": false,
+  "crt_file": "C:\\Users\\Administrator\\Desktop\\ca\\ca.crt",
+  "priv_file": "C:\\Users\\Administrator\\Desktop\\ca\\ca.key",
+  "addr":"0.0.0.0",
+  "listen_port": 45323,
+
+  "save_publish": false,
+  "auth_enable": false,
+  "database": "mysql",
+  "data_source": "root:123456@tcp(127.0.0.1:3306)/test",
+  "auth_sql": "select * from user where user = ? and pwd = ?",
+  "save_sql": "insert into message (client_ID,message) values(?,?)"
 }
