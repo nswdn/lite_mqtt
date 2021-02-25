@@ -3,6 +3,8 @@ package session
 import (
 	"encoding/binary"
 	"errors"
+	"excel_parser/author"
+	"excel_parser/config"
 	"excel_parser/proto"
 	"excel_parser/trie"
 	"fmt"
@@ -77,13 +79,14 @@ func handle(s *Session) {
 	// fixed header maximum length 5 bytes.
 	// last byte of headerLen length x: 128 > x > 0, previous bytes y: 256 > y > 0.
 	// only listenPublish packet's headerLen bytes length can be over than 1 byte
+	var decoded content
 	for {
 		n, err = s.Read(bytes)
 		if err != nil {
 			_ = s.Close()
 			return
 		}
-		decoded, err := decoder.decode(bytes[:n])
+		decoded, err = decoder.decode(bytes[:n])
 		if err != nil {
 			continue
 		}
@@ -211,6 +214,13 @@ func (s *Session) processConn(received []byte) error {
 	connect := proto.Connect{}
 	if err := connect.Decode(nil, received[4:]); err != nil {
 		return err
+	}
+
+	if config.EnableAuth() {
+		if !author.Auth(connect.User, connect.Pwd) {
+			_, _ = s.Write(proto.NewConnACK(proto.ConnBadUserPwd))
+			return errors.New("auth failed")
+		}
 	}
 
 	s.Will = connect.Will

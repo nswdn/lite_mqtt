@@ -34,13 +34,11 @@ func unPacket(header int, packet []byte) content {
 		bits       []byte
 		ctrlPacket proto.MQTTControlPacket
 		body       []byte
-		dst        []byte
 	)
 	bits = calc.Bytes2Bits(packet[0])
 	ctrlPacket = proto.CalcControlPacket(bits[:4])
 	body = packet[header:]
-	dst = deepCopy(body)
-	return content{ctrlPacket, bits[4:], dst}
+	return content{ctrlPacket, bits[4:], body}
 }
 
 func deepCopy(src []byte) []byte {

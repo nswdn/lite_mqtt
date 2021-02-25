@@ -1,0 +1,6 @@
+{
+  "auth_enable": true,
+  "auth_type": "mysql",
+  "query_sql": "select * from user where user = ? and pwd = ?",
+  "data_source": "root:123456@tcp(127.0.0.1:3306)/test"
+}
