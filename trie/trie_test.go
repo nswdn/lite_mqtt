@@ -18,3 +18,10 @@ func TestTrie(t *testing.T) {
 		}
 	}
 }
+
+func TestTrieInsert(t *testing.T) {
+	tr.insert("test", "id", nil)
+	tr.insert("test/ss/s", "id", nil)
+	tr.insert("test/ss/d", "id", nil)
+	fmt.Println(tr)
+}
