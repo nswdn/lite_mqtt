@@ -48,7 +48,12 @@ func (coder *decoder) decode(conn net.Conn, in []byte) (content, error) {
 	)
 
 	fixedHeader := in[:5]
-	remaining, remainingBytesLen, _ := calcRemaining(fixedHeader[1:])
+
+	remaining, remainingBytesLen, err := calcRemaining(fixedHeader[1:])
+	if err != nil {
+		return content{}, err
+	}
+
 	headerLen = remainingBytesLen + 1
 	received := len(in) - headerLen
 
@@ -67,13 +72,11 @@ func (coder *decoder) decode(conn net.Conn, in []byte) (content, error) {
 	return unPacket(headerLen, in), nil
 }
 
-func calcRemaining(remaining []byte) (int, int, error) {
+// value: packet total length without fixed header(control packet length + remaining bytes length)
+func calcRemaining(remaining []byte) (value, remainingLen int, err error) {
 	var (
-		value        = 0
-		multiplier   = 1
-		remainingLen = 0
-		err          error
-		last         byte
+		multiplier = 1
+		last       byte
 	)
 
 	for _, i := range remaining {
@@ -97,6 +100,5 @@ func calcRemaining(remaining []byte) (int, int, error) {
 			err = errors.New("Malformed Remaining Length")
 		}
 	}
-
-	return value, remainingLen, err
+	return
 }
