@@ -41,15 +41,6 @@ func (re *redisDB) auth(user, pwd string) (bool, error) {
 
 func (re *redisDB) save(clientID string, content []byte) error {
 	result := re.conn.LPush(clientID, content)
-
-	re.conn.XAdd(&redis.XAddArgs{
-		Stream:       "",
-		MaxLen:       0,
-		MaxLenApprox: 0,
-		ID:           "",
-		Values:       nil,
-	})
-
 	return result.Err()
 }
 
