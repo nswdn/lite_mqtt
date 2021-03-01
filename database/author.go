@@ -31,7 +31,7 @@ func init() {
 		}
 		log.Println("db with mysql")
 	case Redis:
-		panic("unsupported db by redis")
+		calRedis()
 	}
 }
 

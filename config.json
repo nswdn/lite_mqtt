@@ -5,9 +5,9 @@
   "addr":"0.0.0.0",
   "listen_port": 45323,
 
-  "save_publish": false,
-  "auth_enable": false,
-  "database": "mysql",
+  "save_publish": true,
+  "auth_enable": true,
+  "database": "redis",
   "data_source": "root:123456@tcp(127.0.0.1:3306)/test",
   "auth_sql": "select * from user where user = ? and pwd = ?",
   "save_sql": "insert into message (client_ID,message) values(?,?)"
