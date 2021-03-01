@@ -42,29 +42,33 @@ func deepCopy(src []byte) []byte {
 	return dst
 }
 
-func (coder *decoder) decode(conn net.Conn, in []byte) (content, error) {
+func (coder *decoder) decode(conn net.Conn, in []byte) (con content, err error) {
 	var (
-		headerLen int
+		headerLen         int
+		remaining         int
+		remainingBytesLen int
+		received          int
 	)
 
 	fixedHeader := in[:5]
 
-	remaining, remainingBytesLen, err := calcRemaining(fixedHeader[1:])
+	remaining, remainingBytesLen, err = calcRemaining(fixedHeader[1:])
 	if err != nil {
-		return content{}, err
+		return
 	}
 
 	headerLen = remainingBytesLen + 1
-	received := len(in) - headerLen
+	received = len(in) - headerLen
 
 	if received < remaining {
+		var left int
 		leftBytes := make([]byte, remaining-received)
-		left, err := io.ReadFull(conn, leftBytes)
+		left, err = io.ReadFull(conn, leftBytes)
 		if err != nil {
-			return content{}, err
+			return
 		}
 		if left+received != remaining {
-			return content{}, err
+			return
 		}
 		in = append(in, leftBytes[:left]...)
 	}
