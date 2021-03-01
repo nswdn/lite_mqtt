@@ -25,7 +25,7 @@ func (ss *sessionHolder) put(clientID string, session *Session) {
 	ss.mutex.Unlock()
 
 	if ok {
-		_ = s.Close()
+		_ = s.Conn.Close()
 	}
 }
 

@@ -16,10 +16,6 @@ import (
 	"time"
 )
 
-type SubscribingTopic struct {
-	ReceiveChan chan []byte // a signal channel to stop select Receiver
-}
-
 type Session struct {
 	Conn         net.Conn
 	disconnected bool
@@ -29,7 +25,7 @@ type Session struct {
 	Will         proto.Will
 
 	mutex       sync.Mutex
-	Subscribing map[string]*SubscribingTopic // subscribing topics. key: topic name, value topic's info
+	Subscribing map[string]chan []byte // subscribing topics. key: topic name, value topic's info
 
 	ProcessStopChan chan struct{}
 }
@@ -47,7 +43,7 @@ func init() {
 func New(conn net.Conn) {
 	session := &Session{
 		Conn:            conn,
-		Subscribing:     make(map[string]*SubscribingTopic),
+		Subscribing:     make(map[string]chan []byte),
 		ProcessStopChan: make(chan struct{}),
 	}
 	handle(session)
@@ -138,14 +134,12 @@ func (s *Session) handleUnsubscribe(remain []byte) {
 		return
 	}
 
-	s.mutex.Lock()
 	for _, topic := range us.Topic {
 		subscribingTopic := s.Subscribing[topic]
-		trie.Unsubscribe([]string{topic}, s.ClientID)
-		close(subscribingTopic.ReceiveChan)
+		trie.Unsubscribe(topic, s.ClientID)
+		close(subscribingTopic)
 		delete(s.Subscribing, topic)
 	}
-	s.mutex.Unlock()
 
 	ack := proto.NewCommonACK(proto.PUnsubscribeACK, us.PacketID)
 	_, _ = s.Write(ack)
@@ -176,11 +170,9 @@ func (s *Session) handleSubscribe(remain []byte) {
 
 func (s *Session) subscribe(max proto.QOS, subscribe proto.Subscribe) {
 	for _, topic := range subscribe.Topic {
-		receiverChan := make(chan []byte, 100)
+		receiverChan := make(chan []byte, 10)
 		trie.Subscribe(topic, s.ClientID, receiverChan)
-		s.Subscribing[topic] = &SubscribingTopic{
-			ReceiveChan: receiverChan,
-		}
+		s.Subscribing[topic] = receiverChan
 		t := topic
 		go s.listenSubscribe(receiverChan, t, max)
 	}
@@ -256,15 +248,13 @@ func (s *Session) Close() error {
 
 	topicNames := make([]string, len(s.Subscribing))
 
-	s.mutex.Lock()
-	for topicName, topic := range s.Subscribing {
+	for topicName, receiveChan := range s.Subscribing {
 		topicNames[i] = topicName
-		trie.Unsubscribe(topicNames, s.ClientID)
-		close(topic.ReceiveChan)
+		trie.Unsubscribe(topicName, s.ClientID)
+		close(receiveChan)
 		delete(s.Subscribing, topicName)
 		i++
 	}
-	s.mutex.Unlock()
 
 	if !s.disconnected {
 		trie.Publish(s.Will.Topic, s.Will.Retain, s.Will.Payload)

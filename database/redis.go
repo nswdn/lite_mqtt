@@ -32,7 +32,12 @@ func (re *redisDB) auth(user, pwd string) (bool, error) {
 	if result.Err() != nil {
 		return false, result.Err()
 	}
-	if result.String() != pwd {
+
+	var res string
+	if err := result.Scan(&res); err != nil {
+		return false, err
+	}
+	if res != pwd {
 		return false, errors.New(fmt.Sprintf("auth failed, user:[%s] pwd: [%s]", user, pwd))
 	}
 

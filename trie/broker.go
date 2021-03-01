@@ -54,12 +54,10 @@ func Subscribe(topicName, clientID string, receiver chan<- []byte) {
 	}
 }
 
-func Unsubscribe(topicNames []string, clientID string) {
+func Unsubscribe(topicName string, clientID string) {
 	b.rwMutex.RLock()
-	for _, topicName := range topicNames {
-		if match := b.topicTrie.match(topicName); match != nil {
-			match.topic.unsubscribe(clientID)
-		}
+	if match := b.topicTrie.match(topicName); match != nil {
+		match.topic.unsubscribe(clientID)
 	}
 
 	b.rwMutex.RUnlock()
@@ -81,7 +79,7 @@ func (broker *Broker) listenPublish() {
 		case message = <-broker.publishChan:
 			broker.rwMutex.RLock()
 			if match = broker.topicTrie.match(message.topic); match != nil {
-				if message.retain == true {
+				if message.retain {
 					if len(message.payload) > 0 {
 						match.topic.retain = message.payload
 					} else {
