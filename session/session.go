@@ -82,7 +82,7 @@ func handle(s *Session) {
 			_ = s.Close()
 			return
 		}
-		decoded, err = decoder.decode(bytes[:n])
+		decoded, err = decoder.decode(s.Conn, bytes[:n])
 		if err != nil {
 			continue
 		}

@@ -1,17 +1,14 @@
 package session
 
 import (
-	"bytes"
 	"errors"
 	"excel_parser/calc"
 	"excel_parser/proto"
+	"io"
+	"net"
 )
 
 type decoder struct {
-	store     *bytes.Buffer
-	decoding  bool
-	totalLen  int
-	headerLen int
 }
 
 type content struct {
@@ -21,9 +18,7 @@ type content struct {
 }
 
 func NewDecoder() *decoder {
-	d := &decoder{
-		store: bytes.NewBuffer(nil),
-	}
+	d := &decoder{}
 
 	//go d.processPacket()
 	return d
@@ -47,36 +42,33 @@ func deepCopy(src []byte) []byte {
 	return dst
 }
 
-func (coder *decoder) decode(in []byte) (content, error) {
-	coder.store.Write(in)
-	for {
-		if coder.store.Len() >= 2 {
-			if !coder.decoding {
-				fixedHeader := coder.store.Next(5)
-				remaining, remainingBytesLen, _ := calcRemaining(fixedHeader[1:])
-				coder.totalLen = remaining + remainingBytesLen + 1
-				coder.headerLen = remainingBytesLen + 1
-				newStore := bytes.NewBuffer(fixedHeader)
-				newStore.Write(coder.store.Bytes())
-				coder.store = newStore
-				if coder.totalLen == 1 {
-					coder.totalLen += 1
-				}
-			}
+func (coder *decoder) decode(conn net.Conn, in []byte) (content, error) {
+	var (
+		totalLen   int
+		headerLen  int
+		contentLen int
+	)
 
-			if coder.store.Len() < coder.totalLen {
-				return content{}, errors.New("invalid length")
-			}
+	fixedHeader := in[:5]
+	remaining, remainingBytesLen, _ := calcRemaining(fixedHeader[1:])
+	totalLen = remaining + remainingBytesLen + 1
+	headerLen = remainingBytesLen + 1
+	received := len(in) - headerLen
 
-			fullPacket := coder.store.Next(coder.totalLen)
-			coder.store = bytes.NewBuffer(coder.store.Bytes())
-			return unPacket(coder.headerLen, fullPacket), nil
-
+	contentLen = totalLen - headerLen
+	if received < contentLen {
+		leftBytes := make([]byte, contentLen-received)
+		left, err := io.ReadFull(conn, leftBytes)
+		if err != nil {
+			return content{}, err
 		}
-		break
+		if left+received != remainingBytesLen {
+			return content{}, err
+		}
+		in = append(in, leftBytes[:left]...)
 	}
 
-	return content{}, errors.New("invalid length")
+	return unPacket(headerLen, in), nil
 }
 
 func calcRemaining(remaining []byte) (int, int, error) {
