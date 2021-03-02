@@ -52,14 +52,16 @@ func (coder *decoder) decode(conn net.Conn, in []byte) (con content, err error) 
 	if received < remaining {
 		var left int
 		leftBytes := make([]byte, remaining-received)
+
 		// todo need read time out
-		left, err = io.ReadFull(conn, leftBytes)
-		if err != nil {
+		if left, err = io.ReadFull(conn, leftBytes); err != nil {
 			return
 		}
+
 		if left+received != remaining {
 			return
 		}
+
 		in = append(in, leftBytes[:left]...)
 	}
 
