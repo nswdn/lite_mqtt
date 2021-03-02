@@ -15,6 +15,7 @@ func init() {
 	}
 }
 
+// A client id could not online second times, offline the first.
 func (ss *sessionHolder) put(clientID string, session *Session) {
 
 	ss.mutex.Lock()
