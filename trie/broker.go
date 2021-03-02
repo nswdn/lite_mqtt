@@ -29,12 +29,7 @@ type Broker struct {
 }
 
 var b = &Broker{
-	topicTrie: &trie{
-		root: &trieNode{
-			size: 0,
-			next: make(map[string]*trieNode),
-		},
-	},
+	topicTrie:   tr,
 	publishChan: make(chan publishMessage, 1),
 }
 
