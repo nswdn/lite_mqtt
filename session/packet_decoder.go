@@ -36,12 +36,6 @@ func unPacket(header int, packet []byte) content {
 	return content{ctrlPacket, bits[4:], body}
 }
 
-func deepCopy(src []byte) []byte {
-	dst := make([]byte, len(src))
-	copy(dst, src)
-	return dst
-}
-
 func (coder *decoder) decode(conn net.Conn, in []byte) (con content, err error) {
 	var headerLen, remaining, remainingBytesLen, received int
 
