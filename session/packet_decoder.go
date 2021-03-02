@@ -43,12 +43,7 @@ func deepCopy(src []byte) []byte {
 }
 
 func (coder *decoder) decode(conn net.Conn, in []byte) (con content, err error) {
-	var (
-		headerLen         int
-		remaining         int
-		remainingBytesLen int
-		received          int
-	)
+	var headerLen, remaining, remainingBytesLen, received int
 
 	fixedHeader := in[:5]
 
