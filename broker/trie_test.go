@@ -1,4 +1,4 @@
-package trie
+package broker
 
 import (
 	"fmt"

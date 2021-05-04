@@ -3,10 +3,10 @@ package session
 import (
 	"encoding/binary"
 	"errors"
+	"excel_parser/broker"
 	"excel_parser/config"
 	"excel_parser/database"
 	"excel_parser/proto"
-	"excel_parser/trie"
 	"fmt"
 	"io"
 	"log"
@@ -27,7 +27,8 @@ type Session struct {
 	mutex       sync.Mutex
 	Subscribing map[string]chan []byte // subscribing topics. key: topic name, value topic's info
 
-	ProcessStopChan chan struct{}
+	ProcessStopChan chan struct {
+	}
 }
 
 var (
@@ -70,8 +71,6 @@ func handle(s *Session) {
 
 	log.Println(s.ClientID)
 
-	decoder := NewDecoder()
-
 	// fixed header maximum length 5 bytes.
 	// last byte of headerLen length x: 128 > x > 0, previous bytes y: 256 > y > 0.
 	// only listenPublish packet's headerLen bytes length can be over than 1 byte
@@ -82,7 +81,7 @@ func handle(s *Session) {
 			_ = s.Close()
 			return
 		}
-		decoded, err = decoder.decode(s.Conn, bytes[:n])
+		decoded, err = decode(s.Conn, bytes[:n])
 		if err != nil {
 			continue
 		}
@@ -136,7 +135,7 @@ func (s *Session) handleUnsubscribe(remain []byte) {
 
 	for _, topic := range us.Topic {
 		subscribingTopic := s.Subscribing[topic]
-		trie.Unsubscribe(topic, s.ClientID)
+		broker.Unsubscribe(topic, s.ClientID)
 		close(subscribingTopic)
 		delete(s.Subscribing, topic)
 	}
@@ -171,7 +170,7 @@ func (s *Session) handleSubscribe(remain []byte) {
 func (s *Session) subscribe(max proto.QOS, subscribe proto.Subscribe) {
 	for _, topic := range subscribe.Topic {
 		receiverChan := make(chan []byte, 10)
-		trie.Subscribe(topic, s.ClientID, receiverChan)
+		broker.Subscribe(topic, s.ClientID, receiverChan)
 		s.Subscribing[topic] = receiverChan
 		t := topic
 		go s.listenSubscribe(receiverChan, t, max)
@@ -189,7 +188,7 @@ func (s *Session) handlePublish(properties []uint8, remain []byte) {
 		database.Save(s.ClientID, publish.Payload)
 	}
 
-	trie.Publish(publish.Topic, publish.Retain, publish.Payload)
+	broker.Publish(publish.Topic, publish.Retain, publish.Payload)
 
 	if publish.Qos == proto.AtLeaseOne {
 		_, _ = s.Write(proto.NewCommonACK(proto.PPubACKAlia, publish.PacketID))
@@ -250,15 +249,18 @@ func (s *Session) Close() error {
 
 	for topicName, receiveChan := range s.Subscribing {
 		topicNames[i] = topicName
-		trie.Unsubscribe(topicName, s.ClientID)
+		broker.Unsubscribe(topicName, s.ClientID)
 		close(receiveChan)
 		delete(s.Subscribing, topicName)
 		i++
+		clogger.Printf("%s is unsubscribing topic: %s", s.ClientID, topicName)
 	}
 
 	if !s.disconnected {
-		trie.Publish(s.Will.Topic, s.Will.Retain, s.Will.Payload)
+		broker.Publish(s.Will.Topic, s.Will.Retain, s.Will.Payload)
 	}
+
+	clogger.Printf("%s is disconnected", s.ClientID)
 	return s.Conn.Close()
 }
 

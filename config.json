@@ -5,8 +5,8 @@
   "addr":"0.0.0.0",
   "listen_port": 45323,
 
-  "save_publish": true,
-  "auth_enable": true,
+  "save_publish": false,
+  "auth_enable": false,
   "database": "redis",
   "data_source": "root:123456@tcp(127.0.0.1:3306)/test",
   "auth_sql": "select * from user where user = ? and pwd = ?",

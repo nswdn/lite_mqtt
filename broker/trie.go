@@ -1,8 +1,13 @@
-package trie
+package broker
 
 import "strings"
 
-var tr *trie
+var tr = &trie{
+	root: &trieNode{
+		size: 0,
+		next: make(map[string]*trieNode),
+	},
+}
 
 const (
 	splitter = "/"
@@ -17,15 +22,6 @@ type trieNode struct {
 
 type trie struct {
 	root *trieNode
-}
-
-func init() {
-	tr = &trie{
-		root: &trieNode{
-			size: 0,
-			next: make(map[string]*trieNode),
-		},
-	}
 }
 
 // test/w

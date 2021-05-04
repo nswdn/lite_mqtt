@@ -8,20 +8,10 @@ import (
 	"net"
 )
 
-type decoder struct {
-}
-
 type content struct {
 	ctrlPacket proto.MQTTControlPacket
 	properties []uint8
 	body       []byte
-}
-
-func NewDecoder() *decoder {
-	d := &decoder{}
-
-	//go d.processPacket()
-	return d
 }
 
 func unPacket(header int, packet []byte) content {
@@ -36,7 +26,7 @@ func unPacket(header int, packet []byte) content {
 	return content{ctrlPacket, bits[4:], body}
 }
 
-func (coder *decoder) decode(conn net.Conn, in []byte) (con content, err error) {
+func decode(conn net.Conn, in []byte) (con content, err error) {
 	var headerLen, remaining, remainingBytesLen, received int
 
 	expectedFixedHeader := in[:5]
