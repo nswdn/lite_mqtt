@@ -15,7 +15,7 @@ const (
 )
 
 type trieNode struct {
-	topic *Topic // key: clientID
+	topic *Topic
 	size  int
 	next  map[string]*trieNode
 }
