@@ -1,6 +1,8 @@
 package session
 
 import (
+	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"excel_parser/broker"
@@ -8,80 +10,85 @@ import (
 	"excel_parser/database"
 	"excel_parser/proto"
 	"fmt"
+	"golang.org/x/sync/semaphore"
 	"io"
 	"log"
 	"net"
 	"os"
-	"sync"
 	"time"
 )
 
+var concurrentOutputSemaphore *semaphore.Weighted
+
 type Session struct {
 	Conn         net.Conn
-	disconnected bool
+	disconnected bool // true if recv disconnect command
+	terminated   bool // true connection closed
 	ClientID     string
 	KeepAlive    int // second
 	LastPingReq  time.Time
 	Will         proto.Will
 
-	mutex       sync.Mutex
-	Subscribing map[string]chan []byte // subscribing topics. key: topic name, value topic's info
+	Subscribing map[string]string // subscribing topics. key: topic name, value: topic name
 
-	ProcessStopChan chan struct {
-	}
+	publishChan chan []byte // contains subscribing topic's publish packet
 }
 
 var (
-	clogger *log.Logger
+	clogger     *log.Logger
+	closeSignal = []byte{0}
 )
 
 func init() {
 	c, _ := os.OpenFile("connected.txt", os.O_TRUNC|os.O_CREATE|os.O_WRONLY, os.ModePerm)
 	clogger = log.New(io.MultiWriter(c, os.Stdout), "", 0)
 	log.SetFlags(log.Lshortfile | log.Ltime)
+	concurrentOutputSemaphore = semaphore.NewWeighted(20)
 }
 
 func New(conn net.Conn) {
 	session := &Session{
-		Conn:            conn,
-		Subscribing:     make(map[string]chan []byte),
-		ProcessStopChan: make(chan struct{}),
+		Conn:        conn,
+		Subscribing: make(map[string]string),
+		publishChan: make(chan []byte, 100),
 	}
 	handle(session)
 }
 
 func handle(s *Session) {
 	var (
-		n     int
-		err   error
-		bytes = make([]byte, 1024)
+		n    int
+		err  error
+		recv = make([]byte, 1024)
 	)
 
-	n, err = s.Read(bytes)
+	n, err = s.Read(recv)
 	if err != nil {
 		_ = s.Conn.Close()
 		return
 	}
 
 	// connect
-	if err = s.processConn(bytes[:n]); err != nil {
+	if err = s.processConn(recv[:n]); err != nil {
 		_ = s.Conn.Close()
 		return
 	}
 
 	log.Println(s.ClientID)
 
+	go s.listenSubscribe()
+
 	// fixed header maximum length 5 bytes.
 	// last byte of headerLen length x: 128 > x > 0, previous bytes y: 256 > y > 0.
 	// only listenPublish packet's headerLen bytes length can be over than 1 byte
 	var decoded content
 	for {
-		n, err = s.Read(bytes)
+		n, err = s.Read(recv)
 		if err != nil {
 			_ = s.Close()
 			return
 		}
-		decoded, err = decode(s.Conn, bytes[:n])
+		decoded, err = decode(s.Conn, recv[:n])
 		if err != nil {
 			continue
 		}
@@ -118,7 +125,6 @@ func (s *Session) processInteractive(content content) {
 func (s *Session) handleDisconnect() {
 	s.disconnected = true
 	_ = s.Conn.Close()
-	return
 }
 
 func (s *Session) handlePingREQ() {
@@ -134,9 +140,7 @@ func (s *Session) handleUnsubscribe(remain []byte) {
 	}
 
 	for _, topic := range us.Topic {
-		subscribingTopic := s.Subscribing[topic]
 		broker.Unsubscribe(topic, s.ClientID)
-		close(subscribingTopic)
 		delete(s.Subscribing, topic)
 	}
 
@@ -164,16 +168,10 @@ func (s *Session) handleSubscribe(remain []byte) {
 
 	ack := proto.NewSubscribeACK(subscribe.Qos, subscribe.PacketID)
 	_, _ = s.Write(ack)
-	go s.subscribe(max, subscribe)
-}
 
-func (s *Session) subscribe(max proto.QOS, subscribe proto.Subscribe) {
 	for _, topic := range subscribe.Topic {
-		receiverChan := make(chan []byte, 10)
-		broker.Subscribe(topic, s.ClientID, receiverChan)
-		s.Subscribing[topic] = receiverChan
-		t := topic
-		go s.listenSubscribe(receiverChan, t, max)
+		s.Subscribing[topic] = topic
+		broker.Subscribe(topic, s.ClientID, s.publishChan, max)
 	}
 }
 
@@ -241,44 +239,50 @@ func (s *Session) Read(b []byte) (int, error) {
 }
 
 func (s *Session) Close() error {
-	var i = 0
+
+	if s.terminated {
+		return errors.New("session has been closed")
+	}
+
+	s.terminated = true
+
+	if s.disconnected {
+		broker.Publish(s.Will.Topic, s.Will.Retain, s.Will.Payload)
+	}
 
 	sessionStore.delete(s.ClientID)
 
-	topicNames := make([]string, len(s.Subscribing))
-
-	for topicName, receiveChan := range s.Subscribing {
-		topicNames[i] = topicName
-		broker.Unsubscribe(topicName, s.ClientID)
-		close(receiveChan)
-		delete(s.Subscribing, topicName)
-		i++
-		clogger.Printf("%s is unsubscribing topic: %s", s.ClientID, topicName)
-	}
-
-	if !s.disconnected {
-		broker.Publish(s.Will.Topic, s.Will.Retain, s.Will.Payload)
+	for topic := range s.Subscribing {
+		broker.Unsubscribe(topic, s.ClientID)
+		delete(s.Subscribing, topic)
+		clogger.Printf("%s is unsubscribing topic: %s", s.ClientID, topic)
 	}
 
 	clogger.Printf("%s is disconnected", s.ClientID)
 	return s.Conn.Close()
 }
 
-func (s *Session) listenSubscribe(receiveChan chan []byte, topic string, qos proto.QOS) {
-
+func (s *Session) listenSubscribe() {
 loop:
 	for {
 		select {
-		case msg, ok := <-receiveChan:
-			if !ok {
+		case msg := <-s.publishChan:
+			for concurrentOutputSemaphore.Acquire(context.Background(), 1) != nil {
+			}
+
+			if bytes.Compare(msg, closeSignal) == 0 {
 				break loop
 			}
-			publish, err := proto.NewPublish(0, qos, 0, topic, msg)
+
+			err := s.Conn.SetWriteDeadline(time.Now().Add(time.Second * 5))
+			_, err = s.Conn.Write(msg)
 			if err != nil {
-				_ = s.Conn.Close()
-				break loop
+				log.Printf("failed to write to %s, content: [%v], err: [%s]", s.ClientID, msg, err)
 			}
-			_, _ = s.Conn.Write(publish)
+
+			concurrentOutputSemaphore.Release(1)
 		}
 	}
+
+	_ = s.Close()
 }

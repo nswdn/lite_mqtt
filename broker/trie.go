@@ -1,6 +1,8 @@
 package broker
 
-import "strings"
+import (
+	"strings"
+)
 
 var tr = &trie{
 	root: &trieNode{
@@ -25,12 +27,12 @@ type trie struct {
 }
 
 // test/w
-func (tr *trie) insert(v string, id string, receiver chan<- []byte) *trieNode {
-	split := strings.Split(v, splitter)
+func (tr *trie) insert(subMsg subscriber) *trieNode {
+	split := strings.Split(subMsg.topic, splitter)
 
-	match := tr.match(v)
+	match := tr.match(subMsg.topic)
 	if match != nil {
-		match.topic.Subscribers[id] = receiver
+		match.topic.Subscribers[subMsg.clientID] = subMsg
 		return match
 	}
 
@@ -46,15 +48,15 @@ func (tr *trie) insert(v string, id string, receiver chan<- []byte) *trieNode {
 	}
 
 	if node.topic == nil {
-		node.topic = newTopic(v, id, receiver)
+		node.topic = newTopic(subMsg.topic, subMsg.clientID, subMsg)
 	}
-	node.topic.put(id, receiver)
+	node.topic.put(subMsg.clientID, subMsg)
 	return node
 }
 
 // test/v
-func (tr *trie) match(v string) *trieNode {
-	split := strings.Split(v, splitter)
+func (tr *trie) match(topic string) *trieNode {
+	split := strings.Split(topic, splitter)
 	var node = tr.root
 	for _, str := range split {
 		trNode, ok := node.next[str]
@@ -68,21 +70,20 @@ func (tr *trie) match(v string) *trieNode {
 }
 
 // Deprecated
-func (tr *trie) delete(v string) string {
-	split := strings.Split(v, splitter)
+func (tr *trie) delete(topic, clientID string) {
+	split := strings.Split(topic, splitter)
 	var node = tr.root
 	for i, str := range split {
 		trNode, ok := node.next[str]
 		if !ok {
-			return ""
+			return
 		}
 		node.size--
-		if i == len(split)-1 {
-			delete(node.next, str)
+		if i == len(split) {
+			trNode.topic.unsubscribe(clientID)
 		}
 		node = trNode
 	}
-	return v
 }
 
 func newNode() *trieNode {

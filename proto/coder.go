@@ -251,6 +251,9 @@ func (pub *Publish) Decode(properties []uint8, remain []byte) error {
 	// unique identifier, exist in Qos level 1&2 only
 	if flag.qos != 0 {
 		packetIDBytes := buffer.Next(2)
+		if packetIDBytes == nil {
+			return IncompletePacketErr
+		}
 		packetID := binary.BigEndian.Uint16(packetIDBytes)
 		pub.PacketID = packetID
 	}
