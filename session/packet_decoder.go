@@ -36,6 +36,10 @@ func decode(conn net.Conn, in []byte) (con content, err error) {
 		return
 	}
 
+	// todo
+	//io.ReadFull(conn, []byte{})
+	//io.ReadAtLeast(conn, []byte{}, remaining)
+
 	headerLen = remainingBytesLen + 1
 	received = len(in) - headerLen
 
